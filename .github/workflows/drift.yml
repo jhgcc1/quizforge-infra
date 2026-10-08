@@ -12,6 +12,11 @@ permissions:
   id-token: write
   issues: write
 
+# `shell: bash` makes GitHub run `bash -eo pipefail`: a failure on the left of a pipe can never be masked
+defaults:
+  run:
+    shell: bash
+
 jobs:
   drift:
     runs-on: ubuntu-24.04

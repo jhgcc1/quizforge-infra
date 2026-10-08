@@ -88,6 +88,11 @@ variable "minimax_model" {
   type    = string
   default = "MiniMax-M2.7"
 }
+variable "minimax_judge_model" {
+  description = "Model that judges generated quizzes. Keep it different from minimax_model to avoid self-preference bias."
+  type        = string
+  default     = "MiniMax-M3"
+}
 variable "default_source_url" {
   type    = string
   default = "https://github.com/pipecat-ai/pipecat/blob/main/README.md"
