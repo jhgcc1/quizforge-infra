@@ -1,0 +1,54 @@
+name: Terraform drift
+
+# Nightly: does the real AWS account still match the Terraform state? (someone clicked in the console, a
+# resource was deleted, ...). Read-only role; opens/updates ONE issue when drift is found.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.x", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: terraform plan -detailed-exitcode
+        id: plan
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=quizforge/prod/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
+          set +e
+          # image_tag is whatever is deployed now, so only genuine drift shows up
+          tag=$(aws ecs describe-task-definition --task-definition quizforge-prod-api --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2)
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode -var "image_tag=$tag" > plan.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+      - name: Report drift as an issue
+        if: steps.plan.outputs.code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const code = '${{ steps.plan.outputs.code }}';
+            const plan = fs.readFileSync('infra/terraform/plan.txt', 'utf8').slice(-50000);
+            const title = code === '2' ? 'Terraform drift detected' : 'Terraform drift check FAILED to run';
+            const body = `${title} (run ${context.runId}).\n\n\`\`\`\n${plan}\n\`\`\``;
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', labels: 'drift' });
+            if (open.data.length) await github.rest.issues.createComment({ ...context.repo, issue_number: open.data[0].number, body });
+            else await github.rest.issues.create({ ...context.repo, title, body, labels: ['drift'] });
+      - name: Fail when the check itself broke
+        if: steps.plan.outputs.code == '1'
+        run: exit 1
