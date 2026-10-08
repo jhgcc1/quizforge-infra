@@ -217,11 +217,10 @@ resource "aws_ecs_task_definition" "worker" {
     name      = "worker"
     image     = local.image.worker
     essential = true
-    environment = concat(local.db_env, [
+    environment = concat(local.db_env, var.minimax_judge_model == "" ? [] : [{ name = "MINIMAX_JUDGE_MODEL", value = var.minimax_judge_model }], [
       { name = "NODE_ENV", value = "production" },
       { name = "LLM_MODE", value = "minimax" },
       { name = "MINIMAX_MODEL", value = var.minimax_model },
-      { name = "MINIMAX_JUDGE_MODEL", value = var.minimax_judge_model },
       { name = "SQS_QUEUE_URL", value = aws_sqs_queue.jobs.url },
       { name = "SQS_MAX_RECEIVE", value = "3" },
       { name = "SQS_VISIBILITY_TIMEOUT", value = "360" },

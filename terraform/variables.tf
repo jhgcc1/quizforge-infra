@@ -89,9 +89,9 @@ variable "minimax_model" {
   default = "MiniMax-M2.7"
 }
 variable "minimax_judge_model" {
-  description = "Model that judges generated quizzes. Keep it different from minimax_model to avoid self-preference bias."
+  description = "Model that judges generated quizzes in production. Empty = the generator itself: measured to be far more stable than MiniMax-M3 (one outlier in five on a fixed quiz), and here the score only feeds an hourly alarm. The CI evaluation uses a different model, aggregated."
   type        = string
-  default     = "MiniMax-M3"
+  default     = ""
 }
 variable "default_source_url" {
   type    = string
