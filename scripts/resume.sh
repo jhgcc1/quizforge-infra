@@ -8,10 +8,12 @@ echo "Resuming quizforge-prod (version ${TAG:0:7})..."
 (cd "$TF_DIR" && terraform apply -input=false -auto-approve -var "image_tag=$TAG" -var paused=false | grep -E "Apply complete|Error|starting")
 set_paused_var false
 
-echo "waiting for web, api and worker to be healthy..."
+echo "waiting for web, api, worker and scorer to be healthy..."
 for i in $(seq 1 60); do
-  ok=$(aws ecs describe-services --cluster "$CLUSTER" --services web api worker --query 'length(services[?runningCount>=`1` && runningCount==desiredCount && deployments[0].rolloutState==`COMPLETED`])' --output text)
-  [ "$ok" = "3" ] && break; sleep 10
+  # every service that exists (the scorer only after the deploy that introduced it) must be running and rolled out
+  total=$(aws ecs describe-services --cluster "$CLUSTER" --services web api worker scorer --query 'length(services[?status==`ACTIVE`])' --output text)
+  ok=$(aws ecs describe-services --cluster "$CLUSTER" --services web api worker scorer --query 'length(services[?status==`ACTIVE` && runningCount>=`1` && runningCount==desiredCount && deployments[0].rolloutState==`COMPLETED`])' --output text)
+  [ "$ok" = "$total" ] && [ "$total" -ge 3 ] && break; sleep 10
 done
 APP=$(cd "$TF_DIR" && terraform output -raw app_url)
 for path in / /openapi.json; do

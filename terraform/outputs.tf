@@ -45,3 +45,10 @@ output "alb_dns" {
 output "paused" {
   value = var.paused
 }
+
+output "scoring_queue_url" {
+  value = aws_sqs_queue.scoring.url
+}
+output "scoring_dlq_url" {
+  value = aws_sqs_queue.scoring_dlq.url
+}

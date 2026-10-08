@@ -78,6 +78,16 @@ locals {
       stat = "Maximum", period = 60, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 1
       desc = "A quiz job exhausted its retries and landed in the dead-letter queue"
     }
+    scoring-dlq-not-empty = {
+      ns   = "AWS/SQS", metric = "ApproximateNumberOfMessagesVisible", dims = { QueueName = aws_sqs_queue.scoring_dlq.name }
+      stat = "Maximum", period = 60, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 1
+      desc = "A scoring job exhausted its retries: a quiz is ready but has no quality score"
+    }
+    scoring-queue-too-old = {
+      ns   = "AWS/SQS", metric = "ApproximateAgeOfOldestMessage", dims = { QueueName = aws_sqs_queue.scoring.name }
+      stat = "Maximum", period = 60, evals = 5, cmp = "GreaterThanThreshold", threshold = 900
+      desc = "Scoring is more than 15 minutes behind: quizzes are ready but not scored yet"
+    }
     queue-too-old = {
       ns   = "AWS/SQS", metric = "ApproximateAgeOfOldestMessage", dims = { QueueName = aws_sqs_queue.jobs.name }
       stat = "Maximum", period = 60, evals = 5, cmp = "GreaterThanThreshold", threshold = 600

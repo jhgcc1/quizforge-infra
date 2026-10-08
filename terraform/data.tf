@@ -72,8 +72,26 @@ resource "aws_sqs_queue" "jobs" {
   })
 }
 
+# Scoring: a second queue, so the judge runs in its own service and never holds up generation.
+resource "aws_sqs_queue" "scoring_dlq" {
+  name                      = "${local.name}-scoring-dlq"
+  message_retention_seconds = 14 * 24 * 3600
+  sqs_managed_sse_enabled   = true
+}
+resource "aws_sqs_queue" "scoring" {
+  name                       = "${local.name}-scoring"
+  visibility_timeout_seconds = 180 # a judge run takes ~20-30 s; the scorer heartbeat extends it
+  receive_wait_time_seconds  = 20
+  message_retention_seconds  = 4 * 24 * 3600
+  sqs_managed_sse_enabled    = true
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.scoring_dlq.arn
+    maxReceiveCount     = 3 # keep in sync with SQS_MAX_RECEIVE of the scorer
+  })
+}
+
 data "aws_iam_policy_document" "tls_only" {
-  for_each = { jobs = aws_sqs_queue.jobs.arn, dlq = aws_sqs_queue.dlq.arn }
+  for_each = { jobs = aws_sqs_queue.jobs.arn, dlq = aws_sqs_queue.dlq.arn, scoring = aws_sqs_queue.scoring.arn, scoring_dlq = aws_sqs_queue.scoring_dlq.arn }
   statement {
     sid       = "DenyInsecureTransport"
     effect    = "Deny"
@@ -92,7 +110,7 @@ data "aws_iam_policy_document" "tls_only" {
 }
 
 resource "aws_sqs_queue_policy" "tls_only" {
-  for_each  = { jobs = aws_sqs_queue.jobs.url, dlq = aws_sqs_queue.dlq.url }
+  for_each  = { jobs = aws_sqs_queue.jobs.url, dlq = aws_sqs_queue.dlq.url, scoring = aws_sqs_queue.scoring.url, scoring_dlq = aws_sqs_queue.scoring_dlq.url }
   queue_url = each.value
   policy    = data.aws_iam_policy_document.tls_only[each.key].json
 }

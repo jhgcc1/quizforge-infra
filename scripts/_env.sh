@@ -23,4 +23,4 @@ set_paused_var() { # keep the GitHub variable in sync so the pipeline respects t
 if [ -z "${TF_VAR_alarm_email:-}" ] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
   TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo jhgcc1/quizforge 2>/dev/null || true)"; export TF_VAR_alarm_email
 fi
-running_tasks() { aws ecs describe-services --cluster "$CLUSTER" --services web api worker --query 'sum(services[].runningCount)' --output text; }
+running_tasks() { aws ecs describe-services --cluster "$CLUSTER" --services web api worker scorer --query 'sum(services[].runningCount)' --output text; }

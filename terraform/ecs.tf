@@ -42,7 +42,7 @@ resource "aws_service_discovery_service" "api" {
 ############################ Logs ############################
 
 resource "aws_cloudwatch_log_group" "svc" {
-  for_each          = toset(["web", "api", "worker", "migrate", "sweeper"])
+  for_each          = toset(["web", "api", "worker", "scorer", "migrate", "sweeper"])
   name              = "/${var.project}/${var.environment}/${each.key}"
   retention_in_days = 30
 }
@@ -117,6 +117,29 @@ resource "aws_iam_role_policy" "worker" {
       Effect   = "Allow"
       Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes", "sqs:SendMessage"]
       Resource = aws_sqs_queue.jobs.arn
+      }, {
+      # after saving a quiz the worker (and the sweeper, which uses this role) queue the scoring job
+      Effect   = "Allow"
+      Action   = ["sqs:SendMessage"]
+      Resource = aws_sqs_queue.scoring.arn
+    }]
+  })
+}
+
+# The scorer consumes the scoring queue and nothing else.
+resource "aws_iam_role" "scorer" {
+  name               = "${local.name}-scorer"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks.json
+}
+resource "aws_iam_role_policy" "scorer" {
+  name = "scoring-queue-consume"
+  role = aws_iam_role.scorer.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes"]
+      Resource = aws_sqs_queue.scoring.arn
     }]
   })
 }
@@ -217,11 +240,13 @@ resource "aws_ecs_task_definition" "worker" {
     name      = "worker"
     image     = local.image.worker
     essential = true
-    environment = concat(local.db_env, var.minimax_judge_model == "" ? [] : [{ name = "MINIMAX_JUDGE_MODEL", value = var.minimax_judge_model }], [
+    environment = concat(local.db_env, [
       { name = "NODE_ENV", value = "production" },
+      { name = "WORKER_ROLE", value = "generate" },
       { name = "LLM_MODE", value = "minimax" },
       { name = "MINIMAX_MODEL", value = var.minimax_model },
       { name = "SQS_QUEUE_URL", value = aws_sqs_queue.jobs.url },
+      { name = "SCORING_QUEUE_URL", value = aws_sqs_queue.scoring.url },
       { name = "SQS_MAX_RECEIVE", value = "3" },
       { name = "SQS_VISIBILITY_TIMEOUT", value = "360" },
       { name = "WORKER_CONCURRENCY", value = "1" },
@@ -236,6 +261,48 @@ resource "aws_ecs_task_definition" "worker" {
     logConfiguration = local.log.worker
     healthCheck      = { command = local.node_health["8081"], interval = 30, timeout = 5, retries = 3, startPeriod = 40 }
     stopTimeout      = 120 # Fargate maximum: in-flight jobs finish or resume from their checkpoint
+  }])
+}
+
+# The scorer: the SAME image as the worker with WORKER_ROLE=score. It judges quizzes that are already saved, off the path of
+# the user's request, and shares nothing with the worker but Postgres (and its own queue). Small: it mostly waits for the LLM.
+resource "aws_ecs_task_definition" "scorer" {
+  family                   = "${local.name}-scorer"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.scorer_cpu
+  memory                   = var.scorer_memory
+  execution_role_arn       = aws_iam_role.exec.arn
+  task_role_arn            = aws_iam_role.scorer.arn
+  runtime_platform {
+    cpu_architecture        = local.runtime.cpu_architecture
+    operating_system_family = local.runtime.operating_system_family
+  }
+  container_definitions = jsonencode([{
+    name      = "scorer"
+    image     = local.image.worker
+    essential = true
+    environment = concat(local.db_env, var.minimax_judge_model == "" ? [] : [{ name = "MINIMAX_JUDGE_MODEL", value = var.minimax_judge_model }], [
+      { name = "NODE_ENV", value = "production" },
+      { name = "WORKER_ROLE", value = "score" },
+      { name = "LLM_MODE", value = "minimax" },
+      { name = "MINIMAX_MODEL", value = var.minimax_model },
+      { name = "JUDGE_SAMPLES", value = "3" },
+      { name = "SQS_QUEUE_URL", value = aws_sqs_queue.scoring.url },
+      { name = "SQS_MAX_RECEIVE", value = "3" },
+      { name = "SQS_VISIBILITY_TIMEOUT", value = "180" },
+      { name = "WORKER_CONCURRENCY", value = "2" },
+      { name = "SHUTDOWN_GRACE_MS", value = "100000" },
+      { name = "LANGFUSE_BASE_URL", value = "https://us.cloud.langfuse.com" },
+    ])
+    secrets = concat(local.db_secrets, [
+      { name = "MINIMAX_API_KEY", valueFrom = "${aws_secretsmanager_secret.llm.arn}:MINIMAX_API_KEY::" },
+      { name = "LANGFUSE_PUBLIC_KEY", valueFrom = "${aws_secretsmanager_secret.langfuse.arn}:LANGFUSE_PUBLIC_KEY::" },
+      { name = "LANGFUSE_SECRET_KEY", valueFrom = "${aws_secretsmanager_secret.langfuse.arn}:LANGFUSE_SECRET_KEY::" },
+    ])
+    logConfiguration = local.log.scorer
+    healthCheck      = { command = local.node_health["8081"], interval = 30, timeout = 5, retries = 3, startPeriod = 40 }
+    stopTimeout      = 120
   }])
 }
 
@@ -282,6 +349,7 @@ resource "aws_ecs_task_definition" "sweeper" {
     environment = concat(local.db_env, [
       { name = "NODE_ENV", value = "production" },
       { name = "SQS_QUEUE_URL", value = aws_sqs_queue.jobs.url },
+      { name = "SCORING_QUEUE_URL", value = aws_sqs_queue.scoring.url },
     ])
     secrets          = local.db_secrets
     logConfiguration = local.log.sweeper
@@ -392,6 +460,31 @@ resource "aws_ecs_service" "worker" {
   lifecycle { ignore_changes = [desired_count] }
 }
 
+resource "aws_ecs_service" "scorer" {
+  name                               = "scorer"
+  cluster                            = local.svc_common.cluster
+  task_definition                    = aws_ecs_task_definition.scorer.arn
+  desired_count                      = var.scorer_min
+  launch_type                        = local.svc_common.launch_type
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+  wait_for_steady_state              = true
+  propagate_tags                     = local.svc_common.propagate_tags
+  enable_ecs_managed_tags            = true
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+  network_configuration {
+    subnets          = aws_subnet.app[*].id
+    security_groups  = [aws_security_group.worker.id] # egress only: Postgres, SQS, MiniMax, Langfuse
+    assign_public_ip = false
+  }
+  depends_on = [aws_iam_role_policy.exec_secrets, aws_iam_role_policy_attachment.exec, aws_iam_role_policy.scorer, terraform_data.seed_llm_secrets]
+  lifecycle { ignore_changes = [desired_count] }
+}
+
 ############################ Autoscaling ############################
 
 locals {
@@ -399,6 +492,7 @@ locals {
     web    = { min = var.web_min, max = var.web_max, service = aws_ecs_service.web.name }
     api    = { min = var.api_min, max = var.api_max, service = aws_ecs_service.api.name }
     worker = { min = var.worker_min, max = var.worker_max, service = aws_ecs_service.worker.name }
+    scorer = { min = var.scorer_min, max = var.scorer_max, service = aws_ecs_service.scorer.name }
   }
 }
 
@@ -510,6 +604,93 @@ resource "aws_cloudwatch_metric_alarm" "worker_idle" {
       namespace   = "AWS/SQS"
       metric_name = "ApproximateNumberOfMessagesNotVisible"
       dimensions  = { QueueName = aws_sqs_queue.jobs.name }
+      period      = 60
+      stat        = "Maximum"
+    }
+  }
+}
+
+# scorer: add a task when scoring jobs pile up, remove it when the queue has been idle (the same shape as the worker's).
+resource "aws_appautoscaling_policy" "scorer_out" {
+  name               = "${local.name}-scorer-out"
+  policy_type        = "StepScaling"
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = aws_appautoscaling_target.svc["scorer"].resource_id
+  step_scaling_policy_configuration {
+    adjustment_type         = "ChangeInCapacity"
+    cooldown                = 60
+    metric_aggregation_type = "Maximum"
+    step_adjustment {
+      metric_interval_lower_bound = 0
+      scaling_adjustment          = 1
+    }
+  }
+}
+
+resource "aws_appautoscaling_policy" "scorer_in" {
+  name               = "${local.name}-scorer-in"
+  policy_type        = "StepScaling"
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = aws_appautoscaling_target.svc["scorer"].resource_id
+  step_scaling_policy_configuration {
+    adjustment_type         = "ChangeInCapacity"
+    cooldown                = 300
+    metric_aggregation_type = "Maximum"
+    step_adjustment {
+      metric_interval_upper_bound = 0
+      scaling_adjustment          = -1
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "scorer_backlog" {
+  alarm_name          = "${local.name}-scorer-backlog"
+  alarm_description   = "Scoring jobs are piling up: add a scorer"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.scoring.name }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_appautoscaling_policy.scorer_out.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "scorer_idle" {
+  alarm_name          = "${local.name}-scorer-idle"
+  alarm_description   = "No scoring jobs waiting or running for 10 minutes: remove a scorer"
+  evaluation_periods  = 10
+  threshold           = 0
+  comparison_operator = "LessThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_appautoscaling_policy.scorer_in.arn]
+
+  metric_query {
+    id          = "total"
+    expression  = "visible + inflight"
+    label       = "scoring jobs waiting or running"
+    return_data = true
+  }
+  metric_query {
+    id = "visible"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesVisible"
+      dimensions  = { QueueName = aws_sqs_queue.scoring.name }
+      period      = 60
+      stat        = "Maximum"
+    }
+  }
+  metric_query {
+    id = "inflight"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesNotVisible"
+      dimensions  = { QueueName = aws_sqs_queue.scoring.name }
       period      = 60
       stat        = "Maximum"
     }

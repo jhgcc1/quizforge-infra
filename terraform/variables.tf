@@ -45,6 +45,24 @@ variable "worker_max" {
   type        = number
   default     = 4
 }
+variable "scorer_min" {
+  description = "Scorer service (judges saved quizzes off the request path). 1 keeps scores arriving within seconds."
+  type        = number
+  default     = 1
+}
+variable "scorer_max" {
+  type    = number
+  default = 2
+}
+variable "scorer_cpu" {
+  description = "The scorer only waits for the LLM, so it is small (0.25 vCPU is about $7 a month)"
+  type        = number
+  default     = 256
+}
+variable "scorer_memory" {
+  type    = number
+  default = 512
+}
 variable "cpu_architecture" {
   description = "ARM64 (Graviton, ~20% cheaper; what the pipeline builds) or X86_64 (for images built on an amd64 machine)"
   type        = string
