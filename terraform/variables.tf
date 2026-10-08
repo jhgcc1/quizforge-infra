@@ -89,7 +89,7 @@ variable "minimax_model" {
   default = "MiniMax-M2.7"
 }
 variable "minimax_judge_model" {
-  description = "Model that judges generated quizzes in production. Empty = the generator itself: measured to be far more stable than MiniMax-M3 (one outlier in five on a fixed quiz), and here the score only feeds an hourly alarm. The CI evaluation uses a different model, aggregated."
+  description = "Model that judges every generated quiz in production. Set it to the same model the CI evaluation uses (MiniMax-M3, median of JUDGE_SAMPLES=3 parallel runs) so that production and CI scores are produced by the same method. Empty = the generator judges itself (self-preference bias)."
   type        = string
   default     = ""
 }
@@ -120,6 +120,11 @@ variable "monthly_budget_usd" {
 variable "daily_llm_cost_alarm_usd" {
   type    = number
   default = 5
+}
+variable "critical_quality_score" {
+  description = "Alarm when a SINGLE quiz scores below this (0..1), whatever the hourly average is"
+  type        = number
+  default     = 0.4
 }
 variable "min_quality_score" {
   description = "Alarm when the hourly average quiz quality (0..1) drops below this"

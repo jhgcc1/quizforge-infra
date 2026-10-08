@@ -114,6 +114,18 @@ locals {
       stat = "Average", period = 3600, evals = 1, cmp = "LessThanThreshold", threshold = var.min_quality_score
       desc = "Generated quiz quality (deterministic checks + LLM judge) dropped below the minimum"
     }
+    # A 1-hour average hides one terrible quiz among good ones: this fires on the WORST single quiz in any 5 minutes.
+    quiz-quality-critical = {
+      ns   = "QuizForge", metric = "QuizQuality", dims = { Service = "worker" }
+      stat = "Minimum", period = 300, evals = 1, cmp = "LessThanThreshold", threshold = var.critical_quality_score
+      desc = "A single generated quiz scored below the critical quality threshold"
+    }
+    # Without a judge score a quiz has no quality value, so the two alarms above would stay silent: alarm on the blind spot too.
+    judge-failing = {
+      ns   = "QuizForge", metric = "JudgeFailed", dims = { Service = "worker" }
+      stat = "Sum", period = 900, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 3
+      desc = "The LLM judge keeps failing, so quiz quality is not being measured"
+    }
     job-failures = {
       ns   = "QuizForge", metric = "JobFailed", dims = { Service = "worker" }
       stat = "Sum", period = 900, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 3

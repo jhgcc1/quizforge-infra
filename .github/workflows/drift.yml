@@ -13,6 +13,7 @@ permissions:
   issues: write
 
 env:
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }} # who receives the CloudWatch alarms (repository variable; empty = nobody is subscribed)
   TF_VAR_paused: ${{ vars.PAUSED || 'false' }} # drift is judged against the intended state (paused or running)
 
 # `shell: bash` makes GitHub run `bash -eo pipefail`: a failure on the left of a pipe can never be masked

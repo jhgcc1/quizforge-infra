@@ -19,4 +19,8 @@ tf_init() { (cd "$TF_DIR" && [ -f backend.hcl ] && terraform init -input=false -
 set_paused_var() { # keep the GitHub variable in sync so the pipeline respects the state (best effort)
   if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then gh variable set PAUSED --repo jhgcc1/quizforge --body "$1" >/dev/null && echo "GitHub variable PAUSED=$1"; else echo "(gh not available: set the repo variable PAUSED=$1 yourself so the deploy pipeline knows)"; fi
 }
+# who receives the CloudWatch alarms: the same repository variable the pipeline uses, so a local pause/resume never drops the subscription
+if [ -z "${TF_VAR_alarm_email:-}" ] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+  TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo jhgcc1/quizforge 2>/dev/null || true)"; export TF_VAR_alarm_email
+fi
 running_tasks() { aws ecs describe-services --cluster "$CLUSTER" --services web api worker --query 'sum(services[].runningCount)' --output text; }
