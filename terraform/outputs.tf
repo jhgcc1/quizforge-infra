@@ -41,3 +41,7 @@ output "alb_dns" {
   description = "Used by the deploy smoke test to prove the ALB refuses traffic that bypasses CloudFront"
   value       = aws_lb.main.dns_name
 }
+
+output "paused" {
+  value = var.paused
+}

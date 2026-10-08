@@ -240,6 +240,7 @@ resource "aws_iam_role_policy" "scheduler" {
 resource "aws_scheduler_schedule" "sweeper" {
   name                = "${local.name}-sweeper"
   schedule_expression = "rate(5 minutes)"
+  state               = var.paused ? "DISABLED" : "ENABLED"
   flexible_time_window { mode = "OFF" }
   target {
     arn      = aws_ecs_cluster.main.arn

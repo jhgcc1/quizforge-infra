@@ -9,8 +9,9 @@ resource "aws_db_parameter_group" "main" {
   name   = "${local.name}-pg16"
   family = "postgres16"
   parameter {
-    name  = "rds.force_ssl"
-    value = "1" # clients must use TLS; the apps verify the certificate (sslmode=verify-full)
+    name         = "rds.force_ssl"
+    value        = "1"              # clients must use TLS; the apps verify the certificate (sslmode=verify-full)
+    apply_method = "pending-reboot" # static parameter: AWS always stores it like this, "immediate" would show a diff forever
   }
   parameter {
     name  = "log_min_duration_statement"

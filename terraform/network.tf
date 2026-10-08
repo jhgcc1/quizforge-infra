@@ -47,12 +47,14 @@ resource "aws_subnet" "data" {
 # One NAT gateway (cost). Single point of failure for outbound traffic only: documented trade-off,
 # use one per AZ for real production.
 resource "aws_eip" "nat" {
+  count  = var.paused ? 0 : 1 # the NAT gateway (~US$33/month) is the biggest cost that cannot simply be scaled to zero
   domain = "vpc"
   tags   = { Name = "${local.name}-nat" }
 }
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
+  count         = var.paused ? 0 : 1
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
   tags          = { Name = local.name }
   depends_on    = [aws_internet_gateway.main]
@@ -69,9 +71,12 @@ resource "aws_route_table" "public" {
 
 resource "aws_route_table" "app" {
   vpc_id = aws_vpc.main.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
+  dynamic "route" {
+    for_each = var.paused ? [] : [1]
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.main[0].id
+    }
   }
   tags = { Name = "${local.name}-app" }
 }
@@ -109,4 +114,14 @@ resource "aws_vpc_endpoint" "s3" {
 # Lock the default security group down (nothing should ever use it).
 resource "aws_default_security_group" "default" {
   vpc_id = aws_vpc.main.id
+}
+
+# NAT/EIP became conditional: keep the existing resources instead of destroying and recreating them
+moved {
+  from = aws_eip.nat
+  to   = aws_eip.nat[0]
+}
+moved {
+  from = aws_nat_gateway.main
+  to   = aws_nat_gateway.main[0]
 }

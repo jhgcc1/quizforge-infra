@@ -126,3 +126,9 @@ variable "min_quality_score" {
   type        = number
   default     = 0.6
 }
+
+variable "paused" {
+  description = "Pause the environment to stop most of the bill while keeping ALL data and configuration: ECS services scale to 0, the RDS instance is stopped, the NAT gateway is removed and the sweeper schedule is disabled. Resume = apply with paused=false (scripts/pause.sh and scripts/resume.sh do both)."
+  type        = bool
+  default     = false
+}

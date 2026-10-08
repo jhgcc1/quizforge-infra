@@ -407,8 +407,10 @@ resource "aws_appautoscaling_target" "svc" {
   service_namespace  = "ecs"
   scalable_dimension = "ecs:service:DesiredCount"
   resource_id        = "service/${aws_ecs_cluster.main.name}/${each.value.service}"
-  min_capacity       = each.value.min
-  max_capacity       = each.value.max
+  min_capacity       = var.paused ? 0 : each.value.min
+  max_capacity       = var.paused ? 0 : each.value.max
+  # on resume the database must be running BEFORE tasks come back
+  depends_on = [terraform_data.db_power]
 }
 
 # web & api: keep average CPU near 60%
