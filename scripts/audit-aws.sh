@@ -25,7 +25,10 @@ chk "Default security group is empty" "$(q ec2 describe-security-groups --filter
 chk "RDS subnets have no route to the internet" "$(q ec2 describe-route-tables --filters Name=tag:Name,Values=$P-data --query 'RouteTables[0].Routes[?DestinationCidrBlock==`0.0.0.0/0`]' | wc -w | tr -d ' ')" "0"
 
 echo "== compute"
-for s in web api worker; do
+# the scorer exists only after the deploy that introduced it
+SERVICES="web api worker"
+[ "$(q ecs describe-services --cluster $P --services scorer --query 'services[?status==`ACTIVE`]|length(@)')" = "1" ] && SERVICES="$SERVICES scorer"
+for s in $SERVICES; do
   d=$(q ecs describe-services --cluster $P --services $s --query 'services[0].[runningCount,desiredCount,deployments[0].rolloutState,deploymentConfiguration.deploymentCircuitBreaker.rollback]')
   set -- $d; [ "$1" = "$2" ] && [ "$3" = "COMPLETED" ] && [ "$4" = "True" ] && ok "ecs/$s: $1/$2 running, rollout COMPLETED, circuit-breaker rollback ON" || bad "ecs/$s" "$d"
 done
@@ -33,7 +36,7 @@ chk "web+api run >= 2 tasks (HA across AZs)" "$(for s in web api; do q ecs descr
 TASKS=$(q ecs list-tasks --cluster $P --desired-status RUNNING --query 'taskArns')
 chk "no task has a public IP" "$(q ecs describe-tasks --cluster $P --tasks $TASKS --query 'tasks[].attachments[].details[?name==`networkInterfaceId`].value' | xargs -n1 -I{} aws --region $R ec2 describe-network-interfaces --network-interface-ids {} --query 'NetworkInterfaces[0].Association.PublicIp' --output text 2>/dev/null | grep -vc '^None$')" "0"
 chk "tasks span 2 availability zones" "$(q ecs describe-tasks --cluster $P --tasks $TASKS --query 'tasks[].availabilityZone' | tr '\t' '\n' | sort -u | wc -l | tr -d ' ')" "2"
-chk "autoscaling targets exist for web, api, worker" "$(q application-autoscaling describe-scalable-targets --service-namespace ecs --query 'ScalableTargets[].ResourceId' | tr '\t' '\n' | grep -c "service/$P/")" "3"
+chk "autoscaling targets exist for $SERVICES" "$(q application-autoscaling describe-scalable-targets --service-namespace ecs --query 'ScalableTargets[].ResourceId' | tr '\t' '\n' | grep -c "service/$P/")" "$(echo $SERVICES | wc -w | tr -d ' ')"
 chk "worker can scale to 4 (LLM concurrency cap)" "$(q application-autoscaling describe-scalable-targets --service-namespace ecs --resource-ids service/$P/worker --query 'ScalableTargets[0].MaxCapacity')" "4"
 
 echo "== edge"
@@ -69,8 +72,8 @@ chk "state bucket uses a customer-managed KMS key" "$(q s3api get-bucket-encrypt
 echo "== observability"
 chk "alarm topic is encrypted with a CMK" "$(q sns get-topic-attributes --topic-arn $(q sns list-topics --query "Topics[?contains(TopicArn,'$P-alarms')].TopicArn|[0]") --query 'Attributes.KmsMasterKeyId' | grep -c alias/aws/sns)" "0"
 chk ">= 10 alarms defined (dlq, 5xx, quality, cost, ...)" "$([ "$(q cloudwatch describe-alarms --alarm-name-prefix $P --query 'length(MetricAlarms)')" -ge 10 ] && echo yes)" "yes"
-# worker-backlog/worker-idle are autoscaling triggers (they fire by design), not problem alerts
-chk "no problem alarm is currently firing" "$(q cloudwatch describe-alarms --alarm-name-prefix $P --state-value ALARM --query "length(MetricAlarms[?!contains(AlarmName,'-worker-backlog') && !contains(AlarmName,'-worker-idle')])")" "0"
+# worker/scorer backlog and idle alarms are autoscaling triggers (they fire by design), not problem alerts
+chk "no problem alarm is currently firing" "$(q cloudwatch describe-alarms --alarm-name-prefix $P --state-value ALARM --query "length(MetricAlarms[?!contains(AlarmName,'-worker-backlog') && !contains(AlarmName,'-worker-idle') && !contains(AlarmName,'-scorer-backlog') && !contains(AlarmName,'-scorer-idle')])")" "0"
 chk "log groups have retention set" "$(q logs describe-log-groups --log-group-name-prefix /quizforge/prod --query 'logGroups[?retentionInDays==null]|length(@)')" "0"
 chk "sweeper schedule is enabled" "$(q scheduler get-schedule --name $P-sweeper --query State)" "ENABLED"
 
