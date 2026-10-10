@@ -155,3 +155,9 @@ variable "paused" {
   type        = bool
   default     = false
 }
+
+variable "keep_waf" {
+  description = "Only for scripts/pause.sh (phase 1 of a pause): keep the web ACL while CloudFront is updated to stop using it. Leave false."
+  type        = bool
+  default     = false
+}

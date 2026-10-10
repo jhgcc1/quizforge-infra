@@ -105,7 +105,10 @@ resource "aws_lb_listener_rule" "web" {
 ############################ WAF (CloudFront scope, us-east-1) ############################
 
 resource "aws_wafv2_web_acl" "main" {
-  count    = var.paused ? 0 : 1 # paused: deleted (about US$8/month) and recreated on resume
+  # paused: deleted (about US$8/month) and recreated on resume. keep_waf is only used by scripts/pause.sh: phase 1 lets CloudFront
+  # release the web ACL (keep_waf=true), phase 2 deletes it. Terraform does not order "update the distribution" before "delete the
+  # web ACL" by itself, and AWS refuses to delete a web ACL that CloudFront still uses (WAFAssociatedItemException).
+  count    = var.paused && !var.keep_waf ? 0 : 1
   provider = aws.us_east_1
   name     = local.name
   scope    = "CLOUDFRONT"
