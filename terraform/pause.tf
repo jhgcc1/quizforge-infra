@@ -4,7 +4,9 @@
 #   - the RDS instance is STOPPED                  (this file; storage is kept and still billed, compute is not)
 #   - the NAT gateway and its Elastic IP are removed (network.tf)
 #   - the sweeper schedule is disabled             (observability.tf)
-# Still billed while paused: ALB, WAF, RDS storage, KMS keys, secrets (a few dollars a month).
+#   - the load balancer, its listener and rules, and the WAF web ACL are DELETED (edge.tf); CloudFront stays (idle it is free)
+# Still billed while paused (about US$8 a month): RDS storage, KMS keys, secrets, log storage, ECR images.
+# Resume recreates the load balancer and the WAF (a CloudFront update of ~10 minutes is part of it).
 # AWS restarts a stopped RDS instance by itself after 7 days: run scripts/pause.sh again if you stay paused longer.
 
 resource "terraform_data" "db_power" {

@@ -39,7 +39,7 @@ output "migrate_run_task" {
 
 output "alb_dns" {
   description = "Used by the deploy smoke test to prove the ALB refuses traffic that bypasses CloudFront"
-  value       = aws_lb.main.dns_name
+  value       = try(aws_lb.main[0].dns_name, "") # empty while paused
 }
 
 output "paused" {

@@ -14,7 +14,8 @@ echo "running tasks: $(running_tasks)"
 "$(dirname "$0")/env-status.sh"
 cat <<MSG
 
-PAUSED. Still billed (roughly US\$1-2/day): ALB, WAF, RDS storage, KMS keys, secrets.
+PAUSED. Still billed (roughly US\$0.3/day, about US\$8/month): RDS storage, KMS keys, secrets, logs, ECR images.
+  * The load balancer and the WAF are deleted while paused (resume recreates them; the CloudFront update takes ~10 minutes).
   * AWS restarts a stopped RDS by itself after 7 days: if you stay paused longer, run this script again.
   * The deploy pipeline refuses to run while PAUSED=true.
   * Bring everything back with:  AWS_PROFILE=... scripts/resume.sh

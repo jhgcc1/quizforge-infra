@@ -94,7 +94,7 @@ locals {
       desc = "Jobs have waited more than 10 minutes: workers are down or overloaded"
     }
     alb-5xx = {
-      ns   = "AWS/ApplicationELB", metric = "HTTPCode_Target_5XX_Count", dims = { LoadBalancer = aws_lb.main.arn_suffix }
+      ns   = "AWS/ApplicationELB", metric = "HTTPCode_Target_5XX_Count", dims = { LoadBalancer = local.alb_arn_suffix }
       stat = "Sum", period = 300, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 10
       desc = "The services are returning 5xx errors"
     }
@@ -220,7 +220,7 @@ resource "aws_cloudwatch_dashboard" "main" {
       { type = "metric", x = 0, y = 12, width = 12, height = 6, properties = {
         title = "ALB requests and 5xx", region = var.region, period = 300, stat = "Sum"
         metrics = [
-          ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.main.arn_suffix],
+          ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", local.alb_arn_suffix],
           [".", "HTTPCode_Target_5XX_Count", ".", "."],
       ] } },
       { type = "metric", x = 0, y = 18, width = 12, height = 6, properties = {

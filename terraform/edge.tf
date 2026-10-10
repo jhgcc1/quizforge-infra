@@ -4,6 +4,7 @@
 
 #trivy:ignore:AVD-AWS-0053 deliberate: internet-facing, but its security group admits ONLY the CloudFront origin-facing prefix list and every rule demands the secret x-origin-verify header
 resource "aws_lb" "main" {
+  count                      = var.paused ? 0 : 1 # paused: the load balancer (~US$16/month + 2 public IPv4 addresses) is deleted and recreated on resume
   name                       = local.name
   load_balancer_type         = "application"
   subnets                    = aws_subnet.public[*].id
@@ -49,7 +50,8 @@ resource "aws_lb_target_group" "api" {
 
 #trivy:ignore:AVD-AWS-0054 deliberate: no custom domain means no certificate for the ALB; viewers always use HTTPS to CloudFront, and this hop never leaves AWS. Terminate TLS here once a domain exists
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.main.arn
+  count             = var.paused ? 0 : 1
+  load_balancer_arn = aws_lb.main[0].arn
   port              = 80
   protocol          = "HTTP"
   default_action {
@@ -63,7 +65,8 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener_rule" "api" {
-  listener_arn = aws_lb_listener.http.arn
+  count        = var.paused ? 0 : 1
+  listener_arn = aws_lb_listener.http[0].arn
   priority     = 10
   action {
     type             = "forward"
@@ -81,7 +84,8 @@ resource "aws_lb_listener_rule" "api" {
 }
 
 resource "aws_lb_listener_rule" "web" {
-  listener_arn = aws_lb_listener.http.arn
+  count        = var.paused ? 0 : 1
+  listener_arn = aws_lb_listener.http[0].arn
   priority     = 20
   action {
     type             = "forward"
@@ -101,6 +105,7 @@ resource "aws_lb_listener_rule" "web" {
 ############################ WAF (CloudFront scope, us-east-1) ############################
 
 resource "aws_wafv2_web_acl" "main" {
+  count    = var.paused ? 0 : 1 # paused: deleted (about US$8/month) and recreated on resume
   provider = aws.us_east_1
   name     = local.name
   scope    = "CLOUDFRONT"
@@ -160,6 +165,9 @@ resource "aws_wafv2_web_acl" "main" {
 ############################ CloudFront ############################
 
 locals {
+  # for alarms and the dashboard (they stay; with no load balancer they simply have no data)
+  alb_arn_suffix = try(aws_lb.main[0].arn_suffix, "paused")
+
   # AWS managed policies
   cache_disabled    = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
   cache_optimized   = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized
@@ -174,11 +182,13 @@ resource "aws_cloudfront_distribution" "main" {
   comment         = local.name
   http_version    = "http2and3"
   price_class     = "PriceClass_100"
-  web_acl_id      = aws_wafv2_web_acl.main.arn
+  web_acl_id      = var.paused ? null : aws_wafv2_web_acl.main[0].arn
 
   origin {
-    origin_id   = "alb"
-    domain_name = aws_lb.main.dns_name
+    origin_id = "alb"
+    # paused: there is no load balancer; the origin is a placeholder (the distribution itself stays: it costs nothing idle and keeps its
+    # domain name, which the Cognito callback URLs use). On resume the new load balancer name replaces it.
+    domain_name = var.paused ? "alb.paused.invalid" : aws_lb.main[0].dns_name
     custom_origin_config {
       http_port              = 80
       https_port             = 443
