@@ -42,7 +42,7 @@ variable "tf_state_bucket" { type = string }
 locals {
   # job names in .github/workflows/ci.yml: every one must be green before a PR can merge
   required_checks = concat(
-    ["quality", "integration", "migrations", "e2e", "docker-build", "terraform-validate", "secrets-scan"],
+    ["quality", "integration", "migrations", "e2e", "docker-build", "terraform-validate", "secrets-scan", "promptfoo"],
     var.require_plan_check ? ["terraform-plan"] : [],
   )
 }
