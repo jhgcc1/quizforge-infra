@@ -118,11 +118,11 @@ locals {
       stat = "Minimum", period = 300, evals = 1, cmp = "LessThanThreshold", threshold = 2147483648
       desc = "Less than 2 GiB of database storage left"
     }
-    # --- application metrics emitted by the worker (CloudWatch Embedded Metric Format) ---
+    # --- application metrics emitted by the worker and the scorer (CloudWatch Embedded Metric Format; both use Service=worker on purpose) ---
     quiz-quality-low = {
       ns   = "QuizForge", metric = "QuizQuality", dims = { Service = "worker" }
       stat = "Average", period = 3600, evals = 1, cmp = "LessThanThreshold", threshold = var.min_quality_score
-      desc = "Generated quiz quality (deterministic checks + LLM judge) dropped below the minimum"
+      desc = "Quiz quality (deterministic checks + LLM judge, computed by the scorer service) dropped below the minimum"
     }
     # A 1-hour average hides one terrible quiz among good ones: this fires on the WORST single quiz in any 5 minutes.
     quiz-quality-critical = {
@@ -215,6 +215,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", "web"],
           ["...", "api"],
           ["...", "worker"],
+          ["...", "scorer"],
       ] } },
       { type = "metric", x = 0, y = 12, width = 12, height = 6, properties = {
         title = "ALB requests and 5xx", region = var.region, period = 300, stat = "Sum"
@@ -222,9 +223,16 @@ resource "aws_cloudwatch_dashboard" "main" {
           ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.main.arn_suffix],
           [".", "HTTPCode_Target_5XX_Count", ".", "."],
       ] } },
+      { type = "metric", x = 0, y = 18, width = 12, height = 6, properties = {
+        title = "Scoring: waiting / in flight / dead", region = var.region, stat = "Maximum", period = 60
+        metrics = [
+          ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.scoring.name, { label = "waiting" }],
+          [".", "ApproximateNumberOfMessagesNotVisible", ".", ".", { label = "in flight" }],
+          [".", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.scoring_dlq.name, { label = "dead-letter" }],
+      ] } },
       { type = "log", x = 12, y = 12, width = 12, height = 6, properties = {
-        title = "Recent errors (all services)", region = var.region, view = "table"
-        query = "SOURCE '${aws_cloudwatch_log_group.svc["api"].name}' | SOURCE '${aws_cloudwatch_log_group.svc["worker"].name}' | SOURCE '${aws_cloudwatch_log_group.svc["web"].name}' | fields @timestamp, @log, msg, quizId, requestId | filter level = 'error' or level >= 50 | sort @timestamp desc | limit 20"
+        title = "Recent errors (web, api, worker, scorer)", region = var.region, view = "table"
+        query = "SOURCE '${aws_cloudwatch_log_group.svc["api"].name}' | SOURCE '${aws_cloudwatch_log_group.svc["worker"].name}' | SOURCE '${aws_cloudwatch_log_group.svc["scorer"].name}' | SOURCE '${aws_cloudwatch_log_group.svc["web"].name}' | fields @timestamp, @log, msg, quizId, requestId | filter level = 'error' or level >= 50 | sort @timestamp desc | limit 20"
       } },
     ]
   })

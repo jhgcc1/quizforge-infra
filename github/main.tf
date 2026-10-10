@@ -156,7 +156,7 @@ resource "github_actions_variable" "vars" {
   value         = each.value
 }
 
-# Holds the LLM/Langfuse credentials used by the evaluation workflow (values set with scripts/set-github-secrets.sh,
+# Holds the LLM/Langfuse credentials used by the evaluation workflow (values set by hand with `gh secret set --env llm-eval`,
 # never through Terraform, so they stay out of state). Only `main` may use them.
 resource "github_repository_environment" "llm_eval" {
   repository  = github_repository.this.name

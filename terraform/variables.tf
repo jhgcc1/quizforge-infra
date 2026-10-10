@@ -11,7 +11,7 @@ variable "region" {
   default = "us-east-2"
 }
 variable "image_tag" {
-  description = "Image tag (git sha) deployed for web, api and worker"
+  description = "Image tag (git sha) of the web, api and worker images (the scorer, sweeper and migrate tasks use the worker image)"
   type        = string
 }
 variable "vpc_cidr" {
