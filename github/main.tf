@@ -42,7 +42,7 @@ variable "tf_state_bucket" { type = string }
 locals {
   # job names in .github/workflows/ci.yml: every one must be green before a PR can merge
   required_checks = concat(
-    ["quality", "integration", "migrations", "e2e", "docker-build", "terraform-validate", "secrets-scan", "promptfoo"],
+    ["quality", "integration", "migrations", "e2e", "docker-build", "terraform-validate", "secrets-scan", "promptfoo", "llm-eval-pr"],
     var.require_plan_check ? ["terraform-plan"] : [],
   )
 }
@@ -171,4 +171,13 @@ resource "github_repository_environment_deployment_policy" "llm_eval_main" {
   repository     = github_repository.this.name
   environment    = github_repository_environment.llm_eval.environment
   branch_pattern = "main"
+}
+
+# Real-model evaluation on pull requests (job `llm-eval-pr`). Holds ONLY the MiniMax key (set by hand with
+# `gh secret set MINIMAX_API_KEY --env llm-eval-pr`): no Langfuse keys, so a pull request never writes to Langfuse. No branch policy:
+# pull-request runs use refs/pull/N/merge. Only people with write access can push branches of this repository, and forks never get
+# secrets. Use a spending-capped key here.
+resource "github_repository_environment" "llm_eval_pr" {
+  repository  = github_repository.this.name
+  environment = "llm-eval-pr"
 }
