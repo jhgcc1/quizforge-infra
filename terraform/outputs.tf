@@ -8,6 +8,12 @@ output "api_docs_url" {
 output "cognito_user_pool_id" {
   value = aws_cognito_user_pool.main.id
 }
+output "allow_self_signup" {
+  value = var.allow_self_signup
+}
+output "social_providers" {
+  value = local.social_providers
+}
 output "cognito_cli_client_id" {
   value = var.enable_cli_client ? aws_cognito_user_pool_client.cli[0].id : null
 }

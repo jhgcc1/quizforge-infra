@@ -5,9 +5,10 @@ resource "aws_cognito_user_pool" "main" {
   mfa_configuration        = "OPTIONAL"
   deletion_protection      = var.deletion_protection ? "ACTIVE" : "INACTIVE"
 
-  # No public sign-up: an administrator creates every user (scripts/create-user.sh).
+  # Self sign-up (e-mail + password, e-mail verified) when allow_self_signup = true; otherwise an administrator
+  # creates every user (scripts/create-user.sh).
   admin_create_user_config {
-    allow_admin_create_user_only = true
+    allow_admin_create_user_only = !var.allow_self_signup
   }
 
   software_token_mfa_configuration { enabled = true }
@@ -34,6 +35,44 @@ resource "aws_cognito_user_pool_domain" "main" {
   user_pool_id = aws_cognito_user_pool.main.id
 }
 
+# Social login. Created only when the id is set (GitHub production-environment secrets, see docs/auth-setup.md).
+# Federated users get a normal Cognito `sub`, so the API (access tokens only) is unchanged.
+resource "aws_cognito_identity_provider" "google" {
+  count         = var.google_client_id != "" ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.main.id
+  provider_name = "Google"
+  provider_type = "Google"
+
+  provider_details = {
+    client_id        = var.google_client_id
+    client_secret    = var.google_client_secret
+    authorize_scopes = "openid email profile"
+  }
+
+  attribute_mapping = {
+    email    = "email"
+    username = "sub"
+  }
+}
+
+resource "aws_cognito_identity_provider" "facebook" {
+  count         = var.facebook_app_id != "" ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.main.id
+  provider_name = "Facebook"
+  provider_type = "Facebook"
+
+  provider_details = {
+    client_id        = var.facebook_app_id
+    client_secret    = var.facebook_app_secret
+    authorize_scopes = "public_profile,email"
+  }
+
+  attribute_mapping = {
+    email    = "email"
+    username = "id"
+  }
+}
+
 # Confidential client used by the Next.js server: Authorization Code + PKCE, secret never reaches the browser.
 resource "aws_cognito_user_pool_client" "web" {
   name         = "${local.name}-web"
@@ -43,12 +82,14 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email"]
-  supported_identity_providers         = ["COGNITO"]
+  supported_identity_providers         = local.web_identity_providers
   callback_urls                        = ["https://${aws_cloudfront_distribution.main.domain_name}/auth/callback"]
   logout_urls                          = ["https://${aws_cloudfront_distribution.main.domain_name}"]
   explicit_auth_flows                  = ["ALLOW_REFRESH_TOKEN_AUTH"]
   prevent_user_existence_errors        = "ENABLED"
   enable_token_revocation              = true
+
+  depends_on = [aws_cognito_identity_provider.google, aws_cognito_identity_provider.facebook]
 
   access_token_validity  = 60
   id_token_validity      = 60
@@ -80,6 +121,8 @@ resource "aws_cognito_user_pool_client" "cli" {
 }
 
 locals {
-  cognito_client_ids = concat([aws_cognito_user_pool_client.web.id], aws_cognito_user_pool_client.cli[*].id)
-  cognito_domain_url = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.region}.amazoncognito.com"
+  social_providers       = concat(var.google_client_id != "" ? ["google"] : [], var.facebook_app_id != "" ? ["facebook"] : [])
+  web_identity_providers = concat(["COGNITO"], aws_cognito_identity_provider.google[*].provider_name, aws_cognito_identity_provider.facebook[*].provider_name)
+  cognito_client_ids     = concat([aws_cognito_user_pool_client.web.id], aws_cognito_user_pool_client.cli[*].id)
+  cognito_domain_url     = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.region}.amazoncognito.com"
 }

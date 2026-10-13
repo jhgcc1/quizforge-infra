@@ -181,6 +181,8 @@ resource "aws_ecs_task_definition" "web" {
       { name = "COGNITO_CLIENT_ID", value = aws_cognito_user_pool_client.web.id },
       { name = "APP_URL", value = local.app_url },
       { name = "API_URL", value = local.api_url },
+      { name = "ALLOW_SIGNUP", value = tostring(var.allow_self_signup) },
+      { name = "SOCIAL_PROVIDERS", value = join(",", local.social_providers) },
     ]
     secrets          = [{ name = "COGNITO_CLIENT_SECRET", valueFrom = "${aws_secretsmanager_secret.cognito_web.arn}:client_secret::" }]
     logConfiguration = local.log.web

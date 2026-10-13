@@ -119,6 +119,33 @@ variable "daily_quiz_quota" {
   type    = number
   default = 10
 }
+variable "allow_self_signup" {
+  description = "Anyone can create an account (e-mail + password, e-mail verified). false = only an administrator creates users."
+  type        = bool
+  default     = true
+}
+variable "google_client_id" {
+  description = "Google OAuth client id. Empty = no Login with Google. A public identifier (not a secret), so it is not marked sensitive: the provider list is derived from it."
+  type        = string
+  default     = ""
+}
+variable "google_client_secret" {
+  description = "Google OAuth client secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+variable "facebook_app_id" {
+  description = "Facebook app id. Empty = no Login with Facebook. A public identifier (not a secret), so it is not marked sensitive: the provider list is derived from it."
+  type        = string
+  default     = ""
+}
+variable "facebook_app_secret" {
+  description = "Facebook app secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
 variable "enable_cli_client" {
   description = "Second Cognito app client with USER_PASSWORD_AUTH so REST consumers can obtain a token with the AWS CLI"
   type        = bool
