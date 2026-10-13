@@ -161,3 +161,15 @@ variable "keep_waf" {
   type        = bool
   default     = false
 }
+
+variable "rejected_documents_alarm" {
+  description = "Documents rejected (hidden text, unsupported language) in 15 minutes that raise the documents-rejected-spike alarm."
+  type        = number
+  default     = 5
+}
+
+variable "flagged_documents_alarm" {
+  description = "Documents flagged for an instruction aimed at a model in 1 hour that raise the injection-flagged-spike alarm."
+  type        = number
+  default     = 10
+}

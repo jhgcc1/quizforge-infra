@@ -136,6 +136,17 @@ locals {
       stat = "Sum", period = 900, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 3
       desc = "The LLM judge keeps failing, so quiz quality is not being measured"
     }
+    # Someone probing the app: documents rejected for hidden text or an unsupported language, and documents that carry an instruction aimed at a model.
+    documents-rejected-spike = {
+      ns   = "QuizForge", metric = "DocumentRejected", dims = { Service = "worker" }
+      stat = "Sum", period = 900, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = var.rejected_documents_alarm
+      desc = "Many documents were rejected in 15 minutes (hidden or encoded text, or an unsupported language): someone may be probing the guard"
+    }
+    injection-flagged-spike = {
+      ns   = "QuizForge", metric = "InjectionFlagged", dims = { Service = "worker" }
+      stat = "Sum", period = 3600, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = var.flagged_documents_alarm
+      desc = "Many documents carried an instruction aimed at a model in an hour (kept as data, but worth a look)"
+    }
     job-failures = {
       ns   = "QuizForge", metric = "JobFailed", dims = { Service = "worker" }
       stat = "Sum", period = 900, evals = 1, cmp = "GreaterThanOrEqualToThreshold", threshold = 3
