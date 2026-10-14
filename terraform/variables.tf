@@ -54,6 +54,25 @@ variable "scorer_max" {
   type    = number
   default = 2
 }
+variable "worker_cpu" {
+  description = "Generation worker. 1 vCPU: Fargate then allows 2 to 8 GB, and the semantic detector scans a document in a few seconds instead of tens"
+  type        = number
+  default     = 1024
+}
+variable "worker_memory" {
+  description = "Generation worker with Llama Prompt Guard 2 loaded (1.1 GB of weights): measured peak about 2.1 GB, so 4 GB leaves room for the Node heap and long documents. About $20 a month more per task than 0.5 vCPU / 1 GB (ARM64, us-east-1)"
+  type        = number
+  default     = 4096
+}
+variable "injection_detector" {
+  description = "Semantic prompt-injection detector in the generation worker: off | flag (record a finding, the document goes on) | block (reject). The worker image must be the runtime-detector target, which contains the model."
+  type        = string
+  default     = "flag"
+  validation {
+    condition     = contains(["off", "flag", "block"], var.injection_detector)
+    error_message = "injection_detector must be off, flag or block."
+  }
+}
 variable "scorer_cpu" {
   description = "The scorer only waits for the LLM, so it is small (0.25 vCPU is about $7 a month)"
   type        = number

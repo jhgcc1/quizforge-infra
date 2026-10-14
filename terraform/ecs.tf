@@ -230,8 +230,8 @@ resource "aws_ecs_task_definition" "worker" {
   family                   = "${local.name}-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = var.task_cpu
-  memory                   = var.task_memory
+  cpu                      = var.worker_cpu
+  memory                   = var.worker_memory
   execution_role_arn       = aws_iam_role.exec.arn
   task_role_arn            = aws_iam_role.worker.arn
   runtime_platform {
@@ -252,6 +252,8 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "SQS_MAX_RECEIVE", value = "3" },
       { name = "SQS_VISIBILITY_TIMEOUT", value = "360" },
       { name = "WORKER_CONCURRENCY", value = "1" },
+      # the image is the runtime-detector target: Llama Prompt Guard 2 is baked into it (INJECTION_DETECTOR_MODEL_DIR), so no download at run time
+      { name = "INJECTION_DETECTOR", value = var.injection_detector },
       { name = "SHUTDOWN_GRACE_MS", value = "100000" },
       { name = "LANGFUSE_BASE_URL", value = "https://us.cloud.langfuse.com" },
     ])
@@ -261,8 +263,8 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "LANGFUSE_SECRET_KEY", valueFrom = "${aws_secretsmanager_secret.langfuse.arn}:LANGFUSE_SECRET_KEY::" },
     ])
     logConfiguration = local.log.worker
-    healthCheck      = { command = local.node_health["8081"], interval = 30, timeout = 5, retries = 3, startPeriod = 40 }
-    stopTimeout      = 120 # Fargate maximum: in-flight jobs finish or resume from their checkpoint
+    healthCheck      = { command = local.node_health["8081"], interval = 30, timeout = 5, retries = 3, startPeriod = 90 } # the 1.1 GB model is loaded (about 10 s) right after start
+    stopTimeout      = 120                                                                                                # Fargate maximum: in-flight jobs finish or resume from their checkpoint
   }])
 }
 
