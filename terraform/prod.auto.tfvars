@@ -8,3 +8,5 @@ minimax_judge_model = "MiniMax-M3"
 # While the real login is being tried from http://localhost:13000 (scripts/local-cognito.sh), keep the separate localhost client.
 # Set to false (or delete the line) when the testing is over: the production client never accepts a localhost redirect.
 enable_local_dev_client = true
+facebook_enabled        = true
+google_enabled          = true

@@ -35,10 +35,10 @@ resource "aws_cognito_user_pool_domain" "main" {
   user_pool_id = aws_cognito_user_pool.main.id
 }
 
-# Social login. Created only when the id is set (GitHub production-environment secrets, see docs/auth-setup.md).
+# Social login. Created when the flag is on; the id and secret come from AWS Secrets Manager at deploy time (see docs/auth-setup.md).
 # Federated users get a normal Cognito `sub`, so the API (access tokens only) is unchanged.
 resource "aws_cognito_identity_provider" "google" {
-  count         = var.google_client_id != "" ? 1 : 0
+  count         = var.google_enabled ? 1 : 0
   user_pool_id  = aws_cognito_user_pool.main.id
   provider_name = "Google"
   provider_type = "Google"
@@ -53,10 +53,14 @@ resource "aws_cognito_identity_provider" "google" {
     email    = "email"
     username = "sub"
   }
+
+  # The real id and secret exist only in the deploy (read from Secrets Manager); plan and drift runs use placeholders.
+  # They are set when the provider is created. To rotate them: terraform apply -replace on this resource.
+  lifecycle { ignore_changes = [provider_details] }
 }
 
 resource "aws_cognito_identity_provider" "facebook" {
-  count         = var.facebook_app_id != "" ? 1 : 0
+  count         = var.facebook_enabled ? 1 : 0
   user_pool_id  = aws_cognito_user_pool.main.id
   provider_name = "Facebook"
   provider_type = "Facebook"
@@ -71,6 +75,8 @@ resource "aws_cognito_identity_provider" "facebook" {
     email    = "email"
     username = "id"
   }
+
+  lifecycle { ignore_changes = [provider_details] } # see the Google provider above
 }
 
 # Confidential client used by the Next.js server: Authorization Code + PKCE, secret never reaches the browser.
@@ -151,7 +157,7 @@ resource "aws_cognito_user_pool_client" "local_dev" {
 }
 
 locals {
-  social_providers       = concat(var.google_client_id != "" ? ["google"] : [], var.facebook_app_id != "" ? ["facebook"] : [])
+  social_providers       = concat(var.google_enabled ? ["google"] : [], var.facebook_enabled ? ["facebook"] : [])
   web_identity_providers = concat(["COGNITO"], aws_cognito_identity_provider.google[*].provider_name, aws_cognito_identity_provider.facebook[*].provider_name)
   cognito_client_ids     = concat([aws_cognito_user_pool_client.web.id], aws_cognito_user_pool_client.cli[*].id)
   cognito_domain_url     = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.region}.amazoncognito.com"

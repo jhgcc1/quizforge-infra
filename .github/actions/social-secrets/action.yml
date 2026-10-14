@@ -1,0 +1,15 @@
+name: Social login secrets
+description: Reads the Google and Facebook OAuth credentials from AWS Secrets Manager into TF_VAR_* (masked). Needs AWS credentials already configured.
+runs:
+  using: composite
+  steps:
+    - shell: bash -eo pipefail {0}
+      run: |
+        for p in google:google_client_id:google_client_secret facebook:facebook_app_id:facebook_app_secret; do
+          IFS=: read -r name idvar secretvar <<< "$p"
+          json=$(aws secretsmanager get-secret-value --secret-id "quizforge/prod/$name-login" --query SecretString --output text)
+          id=$(jq -r .client_id <<< "$json"); secret=$(jq -r .client_secret <<< "$json")
+          [ -n "$id" ] && [ "$id" != null ] && [ -n "$secret" ] && [ "$secret" != null ] || { echo "::error::quizforge/prod/$name-login must hold client_id and client_secret"; exit 1; }
+          echo "::add-mask::$id"; echo "::add-mask::$secret"
+          { echo "TF_VAR_$idvar=$id"; echo "TF_VAR_$secretvar=$secret"; } >> "$GITHUB_ENV"
+        done

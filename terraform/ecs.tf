@@ -4,7 +4,7 @@ data "aws_ecr_repository" "svc" {
 }
 
 locals {
-  image = { for k, r in data.aws_ecr_repository.svc : k => "${r.repository_url}:${var.image_tag}" }
+  image = { for k, r in data.aws_ecr_repository.svc : k => "${r.repository_url}:${k == "web" && var.web_image_tag != "" ? var.web_image_tag : var.image_tag}" }
 
   app_url     = "https://${aws_cloudfront_distribution.main.domain_name}"
   api_url     = "http://api.${var.project}.internal:8080"

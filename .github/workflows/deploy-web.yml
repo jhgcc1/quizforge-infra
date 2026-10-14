@@ -1,0 +1,111 @@
+name: Deploy web
+
+# Deploys ONLY the front end: builds the web image at the commit pinned in web.ref, then runs a targeted Terraform apply of the web
+# task definition and service. The other services keep the tag they are running. Same role, same `production` approval, same state.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
+jobs:
+  deploy-web:
+    name: deploy-web
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    environment: production
+    concurrency: { group: deploy-production, cancel-in-progress: false } # never at the same time as a full deploy
+    permissions:
+      id-token: write
+      contents: read
+      checks: read
+    env:
+      TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+      TF_VAR_paused: ${{ vars.PAUSED || 'false' }}
+    steps:
+      - name: Refuse while the environment is paused
+        run: |
+          if [ "${{ vars.PAUSED }}" = "true" ]; then echo "::error::The environment is PAUSED. Run scripts/resume.sh first."; exit 1; fi
+      - uses: actions/checkout@v4
+      - name: The commit being deployed must have passed the checks
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          for job in quality e2e docker-build; do
+            c=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs?per_page=100" --jq "[.check_runs[] | select(.name==\"$job\") | .conclusion] | first // \"missing\"")
+            [ "$c" = success ] || { echo "::error::check '$job' is '$c' on ${GITHUB_SHA::7}; merge through a green pull request first"; exit 1; }
+          done
+      - name: Read the pinned front end commit (web.ref)
+        id: webref
+        run: echo "sha=$(tr -d '[:space:]' < web.ref)" >> "$GITHUB_OUTPUT"
+      - name: Check out the front end (jhgcc1/quizforge-web at web.ref) into web/
+        uses: actions/checkout@v4
+        with:
+          repository: jhgcc1/quizforge-web
+          ref: ${{ steps.webref.outputs.sha }}
+          path: web
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.x", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - uses: docker/setup-buildx-action@v3
+      - name: Social login credentials from AWS Secrets Manager (the targeted plan reads the Cognito client)
+        uses: ./.github/actions/social-secrets
+
+      - name: Tags, the web one from the front end commit and the others from what is running now
+        run: |
+          echo "WEB_TAG=web-$(cut -c1-12 <<< '${{ steps.webref.outputs.sha }}')" >> "$GITHUB_ENV"
+          td=$(aws ecs describe-services --cluster quizforge-prod --services api --query 'services[0].taskDefinition' --output text)
+          img=$(aws ecs describe-task-definition --task-definition "$td" --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          echo "CURRENT_TAG=${img##*:}" >> "$GITHUB_ENV"
+          echo "running api image tag: ${img##*:}"
+
+      - name: Build and push the web image (immutable tag)
+        run: |
+          repo="${{ steps.ecr.outputs.registry }}/quizforge/web"
+          if aws ecr describe-images --repository-name quizforge/web --image-ids imageTag=$WEB_TAG >/dev/null 2>&1; then
+            echo "web:$WEB_TAG already in ECR, skipping"
+          else
+            docker buildx build -f web/Dockerfile -t "$repo:$WEB_TAG" --push \
+              --cache-from type=gha,scope=web-arm --cache-to type=gha,scope=web-arm,mode=max web
+          fi
+
+      - name: terraform init
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=quizforge/prod/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
+
+      - name: Plan (web task definition and service only) and refuse anything that destroys
+        working-directory: infra/terraform
+        run: |
+          terraform plan -input=false -no-color -var "image_tag=$CURRENT_TAG" -var "web_image_tag=$WEB_TAG" \
+            -target=aws_ecs_task_definition.web -target=aws_ecs_service.web -out=web.tfplan | tail -30
+          terraform show -json web.tfplan | jq -e '[.resource_changes[] | select(.change.actions | index("delete")) | select(.type != "aws_ecs_task_definition")] | length == 0' >/dev/null \
+            || { echo "::error::the plan deletes something other than an old web task definition revision"; exit 1; }
+          terraform show -json web.tfplan | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions|join(",")) \(.address)"'
+
+      - name: Apply (rolling deploy with circuit breaker; waits for steady state)
+        working-directory: infra/terraform
+        run: terraform apply -input=false -auto-approve web.tfplan
+
+      - name: Smoke test through CloudFront
+        working-directory: infra/terraform
+        run: |
+          url=$(terraform output -raw app_url)
+          expect() { local what=$1 want=$2; shift 2; local got; got=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@" || true)
+            [[ "$got" =~ ^($want)$ ]] || { echo "::error::$what: expected $want, got $got"; exit 1; }; echo "ok  $what ($got)"; }
+          expect "web landing page"            200 "$url/"
+          expect "BFF refuses anonymous calls" 401 "$url/bff/v1/quizzes"
+          expect "app pages need a session"    307 "$url/app"
+          expect "API still requires a token"  401 "$url/v1/quizzes"
+          echo "### Deployed web \`$WEB_TAG\` (front end ${{ steps.webref.outputs.sha }}) to $url" >> "$GITHUB_STEP_SUMMARY"

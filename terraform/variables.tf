@@ -14,6 +14,11 @@ variable "image_tag" {
   description = "Image tag (commit sha) of the web, api, worker and redteam images (the scorer, sweeper and migrate tasks use the worker image)"
   type        = string
 }
+variable "web_image_tag" {
+  description = "Image tag of the web image only. Empty = same as image_tag. A front-end-only deploy sets it and keeps image_tag at what is running."
+  type        = string
+  default     = ""
+}
 variable "vpc_cidr" {
   type    = string
   default = "10.20.0.0/16"
@@ -143,26 +148,36 @@ variable "allow_self_signup" {
   type        = bool
   default     = true
 }
+variable "google_enabled" {
+  description = "Create the Google identity provider. The client id and secret are read from AWS Secrets Manager (quizforge/prod/google-login) by the deploy; plan and drift runs use placeholders (provider_details is ignored after creation)."
+  type        = bool
+  default     = false
+}
+variable "facebook_enabled" {
+  description = "Create the Facebook identity provider. The app id and secret are read from AWS Secrets Manager (quizforge/prod/facebook-login) by the deploy; plan and drift runs use placeholders (provider_details is ignored after creation)."
+  type        = bool
+  default     = false
+}
 variable "google_client_id" {
-  description = "Google OAuth client id. Empty = no Login with Google. A public identifier (not a secret), so it is not marked sensitive: the provider list is derived from it."
+  description = "Google OAuth client id, from Secrets Manager at deploy time. A public identifier, not a secret."
   type        = string
-  default     = ""
+  default     = "placeholder"
 }
 variable "google_client_secret" {
-  description = "Google OAuth client secret"
+  description = "Google OAuth client secret, from Secrets Manager at deploy time"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 variable "facebook_app_id" {
-  description = "Facebook app id. Empty = no Login with Facebook. A public identifier (not a secret), so it is not marked sensitive: the provider list is derived from it."
+  description = "Facebook app id, from Secrets Manager at deploy time. A public identifier, not a secret."
   type        = string
-  default     = ""
+  default     = "placeholder"
 }
 variable "facebook_app_secret" {
-  description = "Facebook app secret"
+  description = "Facebook app secret, from Secrets Manager at deploy time"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 variable "enable_cli_client" {

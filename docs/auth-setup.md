@@ -28,22 +28,22 @@ The "Create account" button shows when `allow_self_signup = true` (the default).
 
 The web app code (login, callback, BFF) is in its own repository, [jhgcc1/quizforge-web](https://github.com/jhgcc1/quizforge-web); this repository pins the version it deploys in `web.ref`. The callback of the web app is already registered in Cognito by Terraform: `https://<cloudfront-domain>/auth/callback` (the `app_url` output plus `/auth/callback`). You do not add it to Google or Facebook. Those two only need the Cognito `idpresponse` URL above. If you add a custom domain later, add its `/auth/callback` to the Cognito web client.
 
-## 4. GitHub secrets
+## 4. Where the secrets live: AWS Secrets Manager
 
-In GitHub go to **Settings > Environments > production > Environment secrets** and create:
+The credentials are stored in AWS Secrets Manager, not in GitHub. Create two secrets (JSON with `client_id` and `client_secret`):
 
-| Secret | Value |
+| Secret | Holds |
 | --- | --- |
-| `GOOGLE_CLIENT_ID` | Google client ID |
-| `GOOGLE_CLIENT_SECRET` | Google client secret |
-| `FACEBOOK_APP_ID` | Facebook App ID |
-| `FACEBOOK_APP_SECRET` | Facebook App secret |
+| `quizforge/prod/google-login` | Google client ID and secret |
+| `quizforge/prod/facebook-login` | Facebook App ID and App secret |
 
-Only the `deploy` job reads them (as `TF_VAR_*`). If a secret is missing, the value is empty and that provider is **not** created. You can enable only Google, only Facebook, both or none. Then run the pipeline on `main` (or re-run the deploy job). Terraform creates the identity providers, adds them to the web client, and sets `SOCIAL_PROVIDERS` (for example `google,facebook`) and `ALLOW_SIGNUP` on the web service, so the buttons appear.
+```bash
+aws secretsmanager create-secret --name quizforge/prod/google-login --secret-string '{"client_id":"...","client_secret":"..."}'
+```
 
-The secrets are stored in the Terraform state (the state bucket is encrypted and private). Never put them in git.
+The deploy jobs read them with the OIDC role (the `.github/actions/social-secrets` step masks the values and exports `TF_VAR_*`). The plan role cannot read them. Terraform creates the identity providers when `google_enabled` / `facebook_enabled` are `true` (in `prod.auto.tfvars`); with a flag off, that provider is not created. Plan and drift runs use placeholders, and `provider_details` is ignored after creation, so they show no change. To rotate a secret, update it in Secrets Manager and run `terraform apply -replace='aws_cognito_identity_provider.google[0]'` (or `facebook`). Terraform creates the identity providers, adds them to the web client, and sets `SOCIAL_PROVIDERS` and `ALLOW_SIGNUP` on the web service, so the buttons appear.
 
-For a local `terraform apply` use `TF_VAR_google_client_id=... ` style environment variables, not a tfvars file in git.
+The values are also in the Terraform state (the state bucket is encrypted and private). Never put them in git.
 
 ## 5. Turn sign-up off
 
