@@ -4,6 +4,7 @@
 #   - the RDS instance is STOPPED                  (this file; storage is kept and still billed, compute is not)
 #   - the NAT gateway and its Elastic IP are removed (network.tf)
 #   - the sweeper schedule is disabled             (observability.tf)
+#   - the nightly red team schedule is disabled and its two alarms are removed (redteam.tf: no NAT gateway, the task could not reach the model API)
 #   - the load balancer, its listener and rules, and the WAF web ACL are DELETED (edge.tf); CloudFront stays (idle it is free)
 # Still billed while paused (about US$8 a month): RDS storage, KMS keys, secrets, log storage, ECR images.
 # Resume recreates the load balancer and the WAF (a CloudFront update of ~10 minutes is part of it).

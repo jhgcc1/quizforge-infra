@@ -11,7 +11,7 @@ variable "region" {
   default = "us-east-2"
 }
 variable "image_tag" {
-  description = "Image tag (git sha) of the web, api and worker images (the scorer, sweeper and migrate tasks use the worker image)"
+  description = "Image tag (commit sha) of the web, api, worker and redteam images (the scorer, sweeper and migrate tasks use the worker image)"
   type        = string
 }
 variable "vpc_cidr" {
@@ -224,4 +224,35 @@ variable "enable_local_dev_client" {
   description = "Create a separate Cognito app client whose only redirect is http://localhost:13000, to try the real login (Cognito, Google, Facebook) from the local stack (scripts/local-cognito.sh). Off by default."
   type        = bool
   default     = false
+}
+
+# --- nightly red team (redteam.tf) ---
+variable "redteam_enabled" {
+  description = "Run the nightly red team task (a separate Fargate task, not a service) and watch it with two alarms. false = the schedule is disabled and the alarms are removed; the bucket and the reports stay."
+  type        = bool
+  default     = true
+}
+variable "redteam_schedule" {
+  description = "EventBridge Scheduler expression (UTC) of the nightly red team run"
+  type        = string
+  default     = "cron(0 6 * * ? *)"
+}
+variable "redteam_cpu" {
+  description = "Red team task CPU. 2 vCPU: Fargate then allows 4 to 16 GB; the semantic detector (Llama Prompt Guard 2) and the parallel cases need the room"
+  type        = number
+  default     = 2048
+}
+variable "redteam_memory" {
+  description = "Red team task memory in MB (the detector model is 1.1 GB; 4 GB like the worker)"
+  type        = number
+  default     = 4096
+}
+variable "redteam_num_tests" {
+  description = "Fresh attack texts per intent each night. The suite has 32 intents and 2 cases per text, so 10 means about 640 tests. Each case that reaches the model costs one generation"
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.redteam_num_tests >= 1 && var.redteam_num_tests <= 100 && var.redteam_num_tests == floor(var.redteam_num_tests)
+    error_message = "redteam_num_tests must be a whole number from 1 to 100."
+  }
 }

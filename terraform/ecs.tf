@@ -1,5 +1,5 @@
 data "aws_ecr_repository" "svc" {
-  for_each = toset(["web", "api", "worker"])
+  for_each = toset(["web", "api", "worker", "redteam"])
   name     = "${var.project}/${each.key}"
 }
 
@@ -42,7 +42,7 @@ resource "aws_service_discovery_service" "api" {
 ############################ Logs ############################
 
 resource "aws_cloudwatch_log_group" "svc" {
-  for_each          = toset(["web", "api", "worker", "scorer", "migrate", "sweeper"])
+  for_each          = toset(["web", "api", "worker", "scorer", "migrate", "sweeper", "redteam"])
   name              = "/${var.project}/${var.environment}/${each.key}"
   retention_in_days = 30
 }

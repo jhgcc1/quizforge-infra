@@ -131,6 +131,15 @@ data "aws_iam_policy_document" "deploy" {
     ]
     resources = ["*"]
   }
+  # The nightly red team reports bucket (infra/terraform/redteam.tf): ${project}-<environment>-reports-<account id>
+  statement {
+    sid     = "ReportsBucket"
+    actions = ["s3:CreateBucket", "s3:Get*", "s3:Put*", "s3:List*", "s3:Delete*"] # create, configure and read the bucket and its objects; nothing else in S3
+    resources = [
+      "arn:${data.aws_partition.current.partition}:s3:::${var.project}-*-reports-${local.account_id}",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.project}-*-reports-${local.account_id}/*",
+    ]
+  }
   statement {
     sid       = "KmsCreate"
     actions   = ["kms:CreateKey", "kms:ListAliases", "kms:ListKeys"]

@@ -4,7 +4,7 @@ data "aws_partition" "current" {}
 locals {
   account_id   = data.aws_caller_identity.current.account_id
   state_bucket = "${var.project}-tfstate-${local.account_id}-${var.region}"
-  services     = ["web", "api", "worker"]
+  services     = ["web", "api", "worker", "redteam"] # redteam: the nightly red team task (docker/redteam/Dockerfile)
 }
 
 ############################ Terraform state ############################
