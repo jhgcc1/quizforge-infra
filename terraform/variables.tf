@@ -219,3 +219,9 @@ variable "flagged_documents_alarm" {
   type        = number
   default     = 10
 }
+
+variable "enable_local_dev_client" {
+  description = "Create a separate Cognito app client whose only redirect is http://localhost:13000, to try the real login (Cognito, Google, Facebook) from the local stack (scripts/local-cognito.sh). Off by default."
+  type        = bool
+  default     = false
+}

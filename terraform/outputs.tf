@@ -14,6 +14,13 @@ output "allow_self_signup" {
 output "social_providers" {
   value = local.social_providers
 }
+output "cognito_domain_url" {
+  description = "Cognito Hosted UI address; the Facebook and Google redirect URI is this plus /oauth2/idpresponse"
+  value       = local.cognito_domain_url
+}
+output "cognito_local_dev_client_id" {
+  value = var.enable_local_dev_client ? aws_cognito_user_pool_client.local_dev[0].id : null
+}
 output "cognito_cli_client_id" {
   value = var.enable_cli_client ? aws_cognito_user_pool_client.cli[0].id : null
 }

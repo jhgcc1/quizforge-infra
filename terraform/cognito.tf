@@ -120,6 +120,36 @@ resource "aws_cognito_user_pool_client" "cli" {
   }
 }
 
+# Optional client for trying the REAL login (Cognito, Google, Facebook) from http://localhost:13000. Separate from the production client so
+# the production client never accepts a localhost redirect. Off by default: turn it on only while testing (-var enable_local_dev_client=true).
+resource "aws_cognito_user_pool_client" "local_dev" {
+  count        = var.enable_local_dev_client ? 1 : 0
+  name         = "${local.name}-local-dev"
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  generate_secret                      = true
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["openid", "email"]
+  supported_identity_providers         = local.web_identity_providers
+  callback_urls                        = ["http://localhost:13000/auth/callback"]
+  logout_urls                          = ["http://localhost:13000"]
+  explicit_auth_flows                  = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  prevent_user_existence_errors        = "ENABLED"
+  enable_token_revocation              = true
+
+  depends_on = [aws_cognito_identity_provider.google, aws_cognito_identity_provider.facebook]
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 1
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+}
+
 locals {
   social_providers       = concat(var.google_client_id != "" ? ["google"] : [], var.facebook_app_id != "" ? ["facebook"] : [])
   web_identity_providers = concat(["COGNITO"], aws_cognito_identity_provider.google[*].provider_name, aws_cognito_identity_provider.facebook[*].provider_name)
