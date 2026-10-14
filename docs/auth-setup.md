@@ -26,7 +26,7 @@ The "Create account" button shows when `allow_self_signup = true` (the default).
 
 ## 3. The app callback
 
-The callback of the web app is already registered in Cognito by Terraform: `https://<cloudfront-domain>/auth/callback` (the `app_url` output plus `/auth/callback`). You do not add it to Google or Facebook. Those two only need the Cognito `idpresponse` URL above. If you add a custom domain later, add its `/auth/callback` to the Cognito web client.
+The web app code (login, callback, BFF) is in its own repository, [jhgcc1/quizforge-web](https://github.com/jhgcc1/quizforge-web); this repository pins the version it deploys in `web.ref`. The callback of the web app is already registered in Cognito by Terraform: `https://<cloudfront-domain>/auth/callback` (the `app_url` output plus `/auth/callback`). You do not add it to Google or Facebook. Those two only need the Cognito `idpresponse` URL above. If you add a custom domain later, add its `/auth/callback` to the Cognito web client.
 
 ## 4. GitHub secrets
 
