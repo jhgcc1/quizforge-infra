@@ -9,11 +9,28 @@ resource "aws_iam_openid_connect_provider" "github" {
 locals {
   # GitHub's immutable subject: survives a repository rename or transfer, so a re-created repo with the same
   # name can never assume these roles. Format: repo:<owner>@<owner id>/<repo>@<repo id>:<context>
-  sub_prefix = "repo:${split("/", var.github_repo)[0]}@${var.github_owner_id}/${split("/", var.github_repo)[1]}@${var.github_repo_id}"
+  repos = {
+    code  = { full = var.github_repo, id = var.github_repo_id }
+    infra = { full = var.infra_repo, id = var.infra_repo_id }
+    web   = { full = var.web_repo, id = var.web_repo_id }
+  }
+  sub_prefix = { for k, r in local.repos : k => "repo:${split("/", r.full)[0]}@${var.github_owner_id}/${split("/", r.full)[1]}@${r.id}" }
   oidc_arn   = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
+
+  # After the cutover (the deploy and the plans live in the infra repository) apply with keep_code_repo_trust=false.
+  plan_subs = concat(
+    ["${local.sub_prefix.infra}:pull_request", "${local.sub_prefix.infra}:ref:refs/heads/*"],
+    var.keep_code_repo_trust ? ["${local.sub_prefix.code}:pull_request", "${local.sub_prefix.code}:ref:refs/heads/*"] : [],
+  )
+  deploy_subs = concat(
+    ["${local.sub_prefix.infra}:environment:production"],
+    var.keep_code_repo_trust ? ["${local.sub_prefix.code}:environment:production"] : [],
+  )
+  # PUBLISH role: images are built by the code repository and by the front end repository; only their `main` branch may push.
+  publish_subs = ["${local.sub_prefix.code}:ref:refs/heads/main", "${local.sub_prefix.web}:ref:refs/heads/main"]
 }
 
-# PLAN role: read-only. PRs and branches of THIS repository may assume it. Fork PRs cannot: GitHub gives
+# PLAN role: read-only. PRs and branches of the INFRA repository (and, until the cutover, the code repository) may assume it. Fork PRs cannot: GitHub gives
 # them no id-token, so no OIDC credentials are ever minted for untrusted code.
 data "aws_iam_policy_document" "plan_trust" {
   statement {
@@ -30,7 +47,7 @@ data "aws_iam_policy_document" "plan_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${local.sub_prefix}:pull_request", "${local.sub_prefix}:ref:refs/heads/*"]
+      values   = local.plan_subs
     }
   }
 }
@@ -70,7 +87,8 @@ resource "aws_iam_role_policy" "plan_state" {
   policy = data.aws_iam_policy_document.plan_state.json
 }
 
-# DEPLOY role: only the `main` branch, only through the `production` GitHub Environment (manual approval).
+# DEPLOY role: only through the `production` GitHub Environment (manual approval, deployable from `main` only) of the infra repository
+# (and, until the cutover, of the code repository).
 data "aws_iam_policy_document" "deploy_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -86,7 +104,7 @@ data "aws_iam_policy_document" "deploy_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${local.sub_prefix}:environment:production"]
+      values   = local.deploy_subs
     }
   }
 }
@@ -184,4 +202,54 @@ resource "aws_iam_policy" "deploy" {
 resource "aws_iam_role_policy_attachment" "deploy" {
   role       = aws_iam_role.deploy.name
   policy_arn = aws_iam_policy.deploy.arn
+}
+
+# PUBLISH role: ECR push only. No Terraform state, no ECS, no IAM: a compromised build of the code or front end repository can add an
+# image (tags are immutable, so it cannot overwrite one) but cannot deploy it: only the infra repository's `deploy` workflow does.
+data "aws_iam_policy_document" "publish_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [local.oidc_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = local.publish_subs
+    }
+  }
+}
+
+resource "aws_iam_role" "publish" {
+  name                 = "${var.project}-gha-publish"
+  assume_role_policy   = data.aws_iam_policy_document.publish_trust.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "publish" {
+  statement {
+    sid       = "ECRAuth"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+  statement {
+    sid = "ECRPush"
+    actions = [
+      "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage",
+      "ecr:DescribeImages", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", # read-only: "is this tag already there?" and layer reuse
+    ]
+    resources = [for r in aws_ecr_repository.svc : r.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "publish" {
+  name   = "ecr-push"
+  role   = aws_iam_role.publish.id
+  policy = data.aws_iam_policy_document.publish.json
 }

@@ -9,7 +9,7 @@ variable "region" {
 }
 
 variable "github_repo" {
-  description = "owner/name of the repository allowed to assume the pipeline roles"
+  description = "owner/name of the application CODE repository (until the cutover it may still assume the plan and deploy roles; it may push images)"
   type        = string
   default     = "jhgcc1/quizforge"
 }
@@ -30,4 +30,34 @@ variable "github_repo_id" {
   description = "Numeric id of the repository (gh api repos/<owner>/<repo> --jq .id)"
   type        = number
   default     = 1409267817
+}
+
+variable "infra_repo" {
+  description = "owner/name of the infrastructure repository: its workflows assume the plan role (PRs, branches) and the deploy role (environment production)"
+  type        = string
+  default     = "jhgcc1/quizforge-infra"
+}
+
+variable "infra_repo_id" {
+  description = "Numeric id of the infra repository (gh api repos/jhgcc1/quizforge-infra --jq .id)"
+  type        = number
+  default     = 1420996676
+}
+
+variable "web_repo" {
+  description = "owner/name of the front end repository: its main branch may push the web image (publish role)"
+  type        = string
+  default     = "jhgcc1/quizforge-web"
+}
+
+variable "web_repo_id" {
+  description = "Numeric id of the front end repository (gh api repos/jhgcc1/quizforge-web --jq .id)"
+  type        = number
+  default     = 1419364905
+}
+
+variable "keep_code_repo_trust" {
+  description = "Keep the code repository in the plan and deploy trust policies. true until the cutover to the infra repository, then false."
+  type        = bool
+  default     = true
 }
