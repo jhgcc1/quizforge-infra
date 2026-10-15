@@ -8,7 +8,7 @@ CLUSTER="quizforge-prod"
 
 need() { command -v "$1" >/dev/null || { echo "missing tool: $1" >&2; exit 1; }; }
 need aws; need terraform; need jq
-aws sts get-caller-identity >/dev/null 2>&1 || { echo "No valid AWS credentials. Set AWS_PROFILE (e.g. AWS_PROFILE=your-profile)." >&2; exit 1; }
+aws sts get-caller-identity >/dev/null 2>&1 || { echo "No valid AWS credentials. Set AWS_PROFILE (e.g. AWS_PROFILE=<your-profile>)." >&2; exit 1; }
 
 # the image tag that is deployed right now: pausing/resuming must never change the running version
 deployed_tag() {
