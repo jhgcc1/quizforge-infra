@@ -47,7 +47,7 @@ stops working when the task credentials expire (a few hours), even though it ask
 
 ```bash
 aws ecs run-task --cluster quizforge-prod --launch-type FARGATE --task-definition quizforge-prod-redteam \
-  --network-configuration "awsvpcConfiguration={subnets=[<private subnet ids>],securityGroups=[<redteam security group id>],assignPublicIP=DISABLED}" \
+  --network-configuration "awsvpcConfiguration={subnets=[<private subnet ids>],securityGroups=[<redteam security group id>],assignPublicIp=DISABLED}" \
   --overrides '{"containerOverrides":[{"name":"redteam","environment":[{"name":"REDTEAM_NUM_TESTS","value":"2"}]}]}'
 ```
 

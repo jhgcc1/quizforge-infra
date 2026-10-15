@@ -49,7 +49,9 @@ chk "ALB drops invalid headers" "$(q elbv2 describe-load-balancer-attributes --l
 
 echo "== identity"
 POOL=$(q cognito-idp list-user-pools --max-results 20 --query "UserPools[?Name=='$P'].Id|[0]")
-chk "Cognito self sign-up is DISABLED (admin-created users only)" "$(q cognito-idp describe-user-pool --user-pool-id $POOL --query 'UserPool.AdminCreateUserConfig.AllowAdminCreateUserOnly')" "True"
+# self sign-up is a deliberate setting (Terraform variable allow_self_signup, default true); the audit checks the deployed pool matches it
+SIGNUP="${ALLOW_SELF_SIGNUP:-true}"; WANT_ADMIN_ONLY=$([ "$SIGNUP" = true ] && echo False || echo True)
+chk "Cognito self sign-up matches allow_self_signup=$SIGNUP (AllowAdminCreateUserOnly=$WANT_ADMIN_ONLY)" "$(q cognito-idp describe-user-pool --user-pool-id $POOL --query 'UserPool.AdminCreateUserConfig.AllowAdminCreateUserOnly')" "$WANT_ADMIN_ONLY"
 chk "Cognito MFA available (OPTIONAL)" "$(q cognito-idp describe-user-pool --user-pool-id $POOL --query 'UserPool.MfaConfiguration')" "OPTIONAL"
 chk "Cognito password policy min length >= 12" "$([ "$(q cognito-idp describe-user-pool --user-pool-id $POOL --query 'UserPool.Policies.PasswordPolicy.MinimumLength')" -ge 12 ] && echo yes)" "yes"
 WEBCLIENT=$(q cognito-idp list-user-pool-clients --user-pool-id $POOL --query "UserPoolClients[?contains(ClientName,'-web')].ClientId|[0]")

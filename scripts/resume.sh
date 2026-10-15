@@ -4,8 +4,9 @@
 . "$(dirname "$0")/_env.sh"
 tf_init
 TAG=$(deployed_tag)
+WEB_TAG=$(deployed_web_tag)
 echo "Resuming quizforge-prod (version ${TAG:0:7})..."
-(cd "$TF_DIR" && terraform apply -input=false -auto-approve -var "image_tag=$TAG" -var paused=false | grep -E "Apply complete|Error|starting")
+(cd "$TF_DIR" && terraform apply -input=false -auto-approve -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" -var paused=false | grep -E "Apply complete|Error|starting")
 set_paused_var false
 
 echo "waiting for web, api, worker and scorer to be healthy..."
