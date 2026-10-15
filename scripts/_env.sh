@@ -59,6 +59,10 @@ set_paused_var() {
 }
 # who receives the CloudWatch alarms: the same repository variable the pipeline uses, so a local pause/resume never drops the subscription
 if [ -z "${TF_VAR_alarm_email:-}" ] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
-  TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo "$INFRA_REPO" 2>/dev/null || true)"; export TF_VAR_alarm_email
+  # the variable of the infra repository; until the cutover it may only exist in the code repository (LEGACY_VAR_REPO)
+  for _r in "$INFRA_REPO" "${LEGACY_VAR_REPO:-jhgcc1/quizforge}"; do
+    TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo "$_r" 2>/dev/null || true)"; [ -n "$TF_VAR_alarm_email" ] && break
+  done
+  export TF_VAR_alarm_email
 fi
 running_tasks() { aws ecs describe-services --cluster "$CLUSTER" --services web api worker scorer --query 'sum(services[].runningCount)' --output text; }

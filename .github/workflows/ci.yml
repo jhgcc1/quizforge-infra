@@ -1,0 +1,136 @@
+name: CI
+
+# Every pull request (and every push to main) must pass these before it can merge (required checks: github/infra_repo.tf).
+# No secrets: the plan job uses a read-only OIDC role and placeholders for the social login credentials.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# a new push to a PR cancels its older run; main runs are never cancelled
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # terraform reads TF_VAR_*: the pipeline never "resumes" a paused environment by accident
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }} # who receives the CloudWatch alarms (repository variable; empty = nobody is subscribed)
+  TF_VAR_paused: ${{ vars.PAUSED || 'false' }}
+
+# `shell: bash` makes GitHub run `bash -eo pipefail`: a failure on the left of a pipe can never be masked
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  terraform-validate:
+    name: terraform-validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.x" }
+      - name: fmt, init, validate (bootstrap, terraform, github)
+        run: |
+          terraform fmt -check -recursive .
+          for d in bootstrap terraform github; do
+            (cd $d && terraform init -backend=false -input=false >/dev/null && terraform validate)
+          done
+      - name: Shell syntax of the operations scripts
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+
+  trivy-config:
+    name: trivy-config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Security scan of the infrastructure code (fail on HIGH/CRITICAL)
+        run: |
+          docker run --rm -v "$PWD:/src" aquasec/trivy:0.58.1 config --severity HIGH,CRITICAL --exit-code 1 \
+            --ignorefile /src/.trivyignore /src
+
+  secrets-scan:
+    name: secrets-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks (full history)
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --verbose
+      - name: No AWS account id and no state bucket name in any tracked file
+        run: |
+          if git grep -nE '(^|[^0-9])[0-9]{12}([^0-9]|$)' -- . ':!*.lock.hcl'; then
+            echo "::error::a 12-digit number (AWS account id?) is committed: pass it at run time instead"; exit 1
+          fi
+          if git grep -nE 'quizforge-tfstate-[0-9a-z]' -- . ; then echo "::error::the state bucket name is committed"; exit 1; fi
+
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint (workflows and composite actions)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+      - name: YAML parses
+        run: python3 -c "import sys,yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/**/*.yml', recursive=True)]"
+
+  # read-only plan of the production stack, commented on the PR. Same code path as the deploy, no secrets, no lock.
+  terraform-plan:
+    name: terraform-plan
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      id-token: write # OIDC: short-lived read-only credentials (the plan role)
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.x", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: terraform plan (read-only role, no lock, the tags that run now, placeholders for the social login secrets)
+        id: plan
+        working-directory: terraform
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=quizforge/prod/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
+          tag_of() { aws ecs describe-task-definition --task-definition "$1" --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2; }
+          tag=$(tag_of quizforge-prod-api); web=$(tag_of quizforge-prod-web)
+          set +e
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode -var "image_tag=$tag" -var "web_image_tag=$web" -out=tfplan > plan.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+      - name: Comment the plan on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN_CODE: ${{ steps.plan.outputs.code }}
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('terraform/plan.txt', 'utf8');
+            if (plan.length > 60000) plan = plan.slice(0, 60000) + '\n... (truncated, see the job log)';
+            const code = process.env.PLAN_CODE;
+            const status = code === '0' ? 'No changes' : code === '2' ? 'Changes pending' : 'Plan FAILED';
+            const body = `### Terraform plan (production stack): ${status}\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n</details>`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+      - name: Fail the check if the plan errored
+        if: steps.plan.outputs.code == '1'
+        run: |
+          tail -40 terraform/plan.txt
+          exit 1

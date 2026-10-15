@@ -19,8 +19,34 @@ variable "owner" {
   default = "jhgcc1"
 }
 variable "repository" {
-  type    = string
-  default = "quizforge"
+  description = "The application CODE repository"
+  type        = string
+  default     = "quizforge"
+}
+variable "infra_repository" {
+  description = "This repository (infrastructure, deploy, operations); see infra_repo.tf"
+  type        = string
+  default     = "quizforge-infra"
+}
+variable "alarm_email" {
+  description = "Who receives the CloudWatch alarms: stored as the repository variable ALARM_EMAIL of the infra repository (pass it with TF_VAR_alarm_email; not committed)"
+  type        = string
+  default     = ""
+}
+variable "initial_paused" {
+  description = "Initial value of the repository variable PAUSED of the infra repository. After creation scripts/pause.sh and resume.sh own it (ignore_changes)."
+  type        = string
+  default     = "false"
+}
+variable "aws_publish_role_arn" {
+  description = "ECR push-only role (bootstrap output gha_publish_role_arn). When set, it is stored as the repository variable AWS_PUBLISH_ROLE_ARN of the code repository (the front end repository gets it with `gh variable set`: it is not managed here)."
+  type        = string
+  default     = ""
+}
+variable "code_repo_terraform_checks" {
+  description = "Keep terraform-validate and terraform-plan as required checks of the CODE repository. true until the cutover (they move to the infra repository), then false."
+  type        = bool
+  default     = true
 }
 variable "reviewer_user_id" {
   description = "Numeric GitHub user id that must approve production deployments"
@@ -40,10 +66,11 @@ variable "aws_deploy_role_arn" { type = string }
 variable "tf_state_bucket" { type = string }
 
 locals {
-  # job names in .github/workflows/ci.yml: every one must be green before a PR can merge
+  # job names in the code repository .github/workflows/ci.yml: every one must be green before a PR can merge
   required_checks = concat(
-    ["quality", "integration", "migrations", "e2e", "docker-build", "terraform-validate", "secrets-scan", "promptfoo", "llm-eval-pr"],
-    var.require_plan_check ? ["terraform-plan"] : [],
+    ["quality", "integration", "migrations", "e2e", "docker-build", "secrets-scan", "promptfoo", "llm-eval-pr"],
+    var.code_repo_terraform_checks ? ["terraform-validate"] : [],
+    var.code_repo_terraform_checks && var.require_plan_check ? ["terraform-plan"] : [],
   )
 }
 

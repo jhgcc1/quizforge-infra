@@ -2,6 +2,7 @@ output "state_bucket" { value = aws_s3_bucket.state.id }
 output "ecr_repository_urls" { value = { for k, r in aws_ecr_repository.svc : k => r.repository_url } }
 output "gha_plan_role_arn" { value = aws_iam_role.plan.arn }
 output "gha_deploy_role_arn" { value = aws_iam_role.deploy.arn }
+output "gha_publish_role_arn" { value = aws_iam_role.publish.arn }
 output "region" { value = var.region }
 output "backend_hcl" {
   description = "Backend settings of ../terraform (do not commit them: they carry the account id)"
