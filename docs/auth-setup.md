@@ -81,3 +81,7 @@ The local stack normally uses a development login (a simulation). To try the rea
 
 Notes: your Facebook app must be in development mode with you as an administrator or tester (or live), and the account you create is a real user in the production user pool.
 
+
+## 4. The name shown in the top bar
+
+The web app shows the person's name, or the e-mail when there is no name. The BFF calls the Cognito `/oauth2/userInfo` endpoint with the access token, which returns `name` only when the app client allows the `profile` scope (the web and local-dev clients do) and the web app requests it (`OAUTH_SCOPES` in the web repository). Google and Facebook users get `name` from the provider mapping (Cognito overwrites mapped attributes at every federated sign-in, so existing users get it at their next login). E-mail sign-up users have no `name` (the standard attribute exists and is optional, but the Hosted UI sign-up form does not ask for it), so they see their e-mail.
