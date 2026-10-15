@@ -183,6 +183,8 @@ resource "aws_ecs_task_definition" "web" {
       { name = "API_URL", value = local.api_url },
       { name = "ALLOW_SIGNUP", value = tostring(var.allow_self_signup) },
       { name = "SOCIAL_PROVIDERS", value = join(",", local.social_providers) },
+      # `profile` makes the Cognito userInfo endpoint return the name (the top bar shows name, else e-mail). The web client must allow it (cognito.tf).
+      { name = "OAUTH_SCOPES", value = "openid email profile" },
     ]
     secrets          = [{ name = "COGNITO_CLIENT_SECRET", valueFrom = "${aws_secretsmanager_secret.cognito_web.arn}:client_secret::" }]
     logConfiguration = local.log.web
