@@ -27,7 +27,7 @@ variable "reviewer_user_id" {
   type        = number
 }
 variable "require_plan_check" {
-  description = "Make the terraform-plan check mandatory (turn on after infra/bootstrap has been applied)"
+  description = "Make the terraform-plan check mandatory (turn on after bootstrap/ has been applied)"
   type        = bool
   default     = false
 }

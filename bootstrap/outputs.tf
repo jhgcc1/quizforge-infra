@@ -4,7 +4,7 @@ output "gha_plan_role_arn" { value = aws_iam_role.plan.arn }
 output "gha_deploy_role_arn" { value = aws_iam_role.deploy.arn }
 output "region" { value = var.region }
 output "backend_hcl" {
-  description = "Contents for infra/terraform/backend.hcl"
+  description = "Backend settings of ../terraform (do not commit them: they carry the account id)"
   value       = <<-EOT
     bucket       = "${aws_s3_bucket.state.id}"
     key          = "${var.project}/prod/terraform.tfstate"

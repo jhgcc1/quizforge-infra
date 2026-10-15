@@ -7,7 +7,7 @@ metrics to CloudWatch and raises an alarm if the model obeyed a hidden instructi
 
 1. **EventBridge Scheduler** (`quizforge-prod-redteam`) runs an ECS `RunTask` at `cron(0 6 * * ? *)` (06:00 UTC, variable `redteam_schedule`).
 2. The task `quizforge-prod-redteam` (Fargate, ARM64, 2 vCPU / 4 GB, private subnets, egress-only security group, no service, no load balancer) starts
-   `scripts/redteam-nightly-aws.sh` from the image `quizforge/redteam` (`docker/redteam/Dockerfile`). The image has promptfoo at the pinned version and
+   `scripts/redteam-nightly-aws.sh` from the image `quizforge/redteam` (`docker/redteam/Dockerfile` in the code repository, built and pushed by its `publish` job). The image has promptfoo at the pinned version and
    the Llama Prompt Guard 2 model baked in, like the worker image. The detector mode is the same as production (`injection_detector`).
 3. The script runs `scripts/promptfoo.sh redteam-nightly`: 32 intents x `redteam_num_tests` fresh texts (default 10) x 2 cases (plain and jailbreak
    template) = about 640 tests. See `promptfoo/README.md` for the intents. Only plain code decides if an attack worked (a canary token in the reply).
@@ -83,8 +83,8 @@ A small `REDTEAM_NUM_TESTS` (1 to 3) is a cheap test of the whole chain. Logs: `
 
 ## Turn it on (first time)
 
-1. Apply `infra/bootstrap` (creates the ECR repository `quizforge/redteam` and lets the deploy role manage the reports bucket). Do this BEFORE merging:
-   the deploy job pushes the image to that repository and Terraform reads it.
-2. Make sure the secret `quizforge-prod/llm` holds a real `MINIMAX_API_KEY` (`scripts/set-secrets.sh`): the task reads the same secret as the worker.
-3. Merge and approve the deploy. It builds and pushes the `redteam` image with the other images, then applies `infra/terraform/redteam.tf`.
+1. Apply `bootstrap/` (creates the ECR repository `quizforge/redteam` and lets the deploy role manage the reports bucket). Do this BEFORE the first deploy:
+   the code repository pushes the image to that repository and Terraform reads it.
+2. Make sure the secret `quizforge-prod/llm` holds a real `MINIMAX_API_KEY` (`scripts/set-secrets.sh` of this repository): the task reads the same secret as the worker.
+3. Run the `deploy` workflow of this repository and approve it. The `redteam` image (same tag as api and worker) is already in ECR; the apply creates `terraform/redteam.tf`.
 4. Confirm the alarm e-mail subscription (`ALARM_EMAIL`), then start one small run by hand (see above) and check `scripts/redteam-latest.sh`.

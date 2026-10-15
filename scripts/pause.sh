@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pause the AWS environment: stops most of the bill, keeps ALL data/config. Undo with scripts/resume.sh.
-# Usage: AWS_PROFILE=... scripts/pause.sh
+# Usage: AWS_PROFILE=... scripts/pause.sh   (from the quizforge-infra checkout)
 . "$(dirname "$0")/_env.sh"
 tf_init
 TAG=$(deployed_tag)
@@ -22,6 +22,6 @@ cat <<MSG
 PAUSED. Still billed (roughly US\$0.3/day, about US\$8/month): RDS storage, KMS keys, secrets, logs, ECR images.
   * The load balancer and the WAF are deleted while paused (resume recreates them; the CloudFront update takes ~10 minutes).
   * AWS restarts a stopped RDS by itself after 7 days: if you stay paused longer, run this script again.
-  * The deploy pipeline refuses to run while PAUSED=true.
+  * The deploy workflow refuses to run while PAUSED=true.
   * Bring everything back with:  AWS_PROFILE=... scripts/resume.sh
 MSG

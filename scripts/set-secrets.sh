@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Stores the LLM and Langfuse credentials in AWS Secrets Manager, read from the local .env.
 # Values go straight to AWS: they never enter Terraform state, git, or the pipeline.
+# The file is the .env of the application code checkout (or any file with the same keys): ENV_FILE=/path/to/.env scripts/set-secrets.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-set -a; . ./.env; set +a
-: "${MINIMAX_API_KEY:?missing in .env}" "${LANGFUSE_PUBLIC_KEY:?missing in .env}" "${LANGFUSE_SECRET_KEY:?missing in .env}"
+ENV_FILE="${ENV_FILE:-./.env}"
+[ -f "$ENV_FILE" ] || { echo "no $ENV_FILE: set ENV_FILE=/path/to/.env (the code repository .env)" >&2; exit 1; }
+set -a; . "$ENV_FILE"; set +a
+: "${MINIMAX_API_KEY:?missing in $ENV_FILE}" "${LANGFUSE_PUBLIC_KEY:?missing in $ENV_FILE}" "${LANGFUSE_SECRET_KEY:?missing in $ENV_FILE}"
 NAME="${NAME_PREFIX:-quizforge-prod}"
 put() { # <secret-id> <json>
   aws secretsmanager put-secret-value --secret-id "$1" --secret-string "$2" --query VersionId --output text >/dev/null

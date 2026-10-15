@@ -10,8 +10,10 @@ terraform {
       version = "~> 3.6"
     }
   }
-  # Remote state in S3 with native locking (no DynamoDB). Values come from backend.hcl:
-  #   terraform init -backend-config=backend.hcl        (bucket is created by infra/bootstrap)
+  # Remote state in S3 with native locking (no DynamoDB). Values are passed at init time (the bucket name carries the account id, so it is never committed):
+  #   terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=quizforge/prod/terraform.tfstate" \
+  #     -backend-config="region=us-east-2" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
+  # (the bucket is created by ../bootstrap; scripts/_env.sh and the workflows do this for you)
   backend "s3" {}
 }
 

@@ -2,10 +2,10 @@
 # A SEPARATE Fargate task (not a service, no load balancer) that EventBridge Scheduler starts every night. It attacks the real pipeline
 # (guard, language policy, Llama Prompt Guard 2, prompts, MiniMax, output rails) with a fresh set of attacks, writes a timestamped report to
 # S3 (redteam/<UTC timestamp>/report.html and summary.json), emits CloudWatch metrics (Embedded Metric Format, Service=redteam) and, when a
-# canary leaked, publishes to the alarm topic. See docs/redteam-nightly.md and scripts/redteam-nightly-aws.sh.
+# canary leaked, publishes to the alarm topic. See docs/redteam-nightly.md; scripts/redteam-nightly-aws.sh lives in the quizforge code repository (it is the entrypoint inside the image).
 #
 # Paused environment: there is no NAT gateway, so the task could not reach the model API. The schedule is disabled and the alarms are removed.
-# Bootstrap first: the ECR repository quizforge/redteam is created by infra/bootstrap (the deploy pipeline pushes the image to it).
+# Bootstrap first: the ECR repository quizforge/redteam is created by bootstrap/ (the publish job of the code repository pushes the image to it).
 
 locals {
   redteam_on     = var.redteam_enabled && !var.paused

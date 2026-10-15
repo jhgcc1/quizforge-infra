@@ -1,0 +1,18 @@
+# secrets and local state: never committed
+.env
+.env.*
+!.env.example
+*.pem
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform/
+*.tfplan
+tfplan
+plan.txt
+drift.txt
+# backend settings carry the AWS account id: they are passed at `terraform init` time, never committed
+backend.hcl
+*.tfvars
+!terraform/prod.auto.tfvars
+!*.tfvars.example

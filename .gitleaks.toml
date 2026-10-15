@@ -1,0 +1,3 @@
+# Default gitleaks rules, no exceptions. A leak must fail the build.
+[extend]
+useDefault = true

@@ -1,7 +1,10 @@
 # shared helpers for pause.sh / resume.sh / env-status.sh  (sourced, not executed)
+# Lives in the quizforge-infra repository. Nothing here refers to the application code repository: the deployed version
+# is read from ECS, the state bucket from TF_STATE_BUCKET / the repository variable / the bucket naming convention.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TF_DIR="$REPO_ROOT/infra/terraform"
+TF_DIR="$REPO_ROOT/terraform"
+INFRA_REPO="${INFRA_REPO:-jhgcc1/quizforge-infra}"
 export AWS_REGION="${AWS_REGION:-us-east-2}"
 export PATH="$HOME/.npm-global/bin:$PATH"
 CLUSTER="quizforge-prod"
@@ -31,12 +34,31 @@ load_social_secrets() {
   done
 }
 load_social_secrets
-tf_init() { (cd "$TF_DIR" && [ -f backend.hcl ] && terraform init -input=false -reconfigure -backend-config=backend.hcl >/dev/null); }
-set_paused_var() { # keep the GitHub variable in sync so the pipeline respects the state (best effort)
-  if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then gh variable set PAUSED --repo jhgcc1/quizforge --body "$1" >/dev/null && echo "GitHub variable PAUSED=$1"; else echo "(gh not available: set the repo variable PAUSED=$1 yourself so the deploy pipeline knows)"; fi
+# The state bucket is never committed (it carries the account id). Order: TF_STATE_BUCKET, the repository variable of the
+# same name, the naming convention of bootstrap (quizforge-tfstate-<account id>-<region>).
+state_bucket() {
+  if [ -n "${TF_STATE_BUCKET:-}" ]; then echo "$TF_STATE_BUCKET"; return; fi
+  local b=""
+  if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then b="$(gh variable get TF_STATE_BUCKET --repo "$INFRA_REPO" 2>/dev/null || true)"; fi
+  [ -n "$b" ] || b="quizforge-tfstate-$(aws sts get-caller-identity --query Account --output text)-$AWS_REGION"
+  echo "$b"
+}
+tf_init() {
+  (cd "$TF_DIR" && terraform init -input=false -reconfigure \
+    -backend-config="bucket=$(state_bucket)" -backend-config="key=quizforge/prod/terraform.tfstate" \
+    -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true" -backend-config="encrypt=true" >/dev/null)
+}
+# Keep the GitHub variable PAUSED in sync so the deploy workflow respects the state (best effort).
+# PAUSED_REPOS lists every repository whose pipeline must know (default: the infra repository; during the cutover window
+# add the old one: PAUSED_REPOS="jhgcc1/quizforge-infra jhgcc1/quizforge").
+set_paused_var() {
+  local r
+  if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+    for r in ${PAUSED_REPOS:-$INFRA_REPO}; do gh variable set PAUSED --repo "$r" --body "$1" >/dev/null && echo "GitHub variable PAUSED=$1 ($r)"; done
+  else echo "(gh not available: set the repo variable PAUSED=$1 yourself so the deploy workflow knows)"; fi
 }
 # who receives the CloudWatch alarms: the same repository variable the pipeline uses, so a local pause/resume never drops the subscription
 if [ -z "${TF_VAR_alarm_email:-}" ] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
-  TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo jhgcc1/quizforge 2>/dev/null || true)"; export TF_VAR_alarm_email
+  TF_VAR_alarm_email="$(gh variable get ALARM_EMAIL --repo "$INFRA_REPO" 2>/dev/null || true)"; export TF_VAR_alarm_email
 fi
 running_tasks() { aws ecs describe-services --cluster "$CLUSTER" --services web api worker scorer --query 'sum(services[].runningCount)' --output text; }

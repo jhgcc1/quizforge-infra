@@ -2,7 +2,7 @@
 # Runs the database migration as a one-off Fargate task and fails unless it exits 0.
 # Usage: scripts/run-migration.sh   (run after `terraform init`; reads the task wiring from terraform outputs)
 set -euo pipefail
-cd "$(dirname "$0")/../infra/terraform"
+cd "$(dirname "$0")/../terraform"
 
 out=$(terraform output -json migrate_run_task)
 cluster=$(jq -r .cluster <<<"$out"); td=$(jq -r .task_definition <<<"$out")
