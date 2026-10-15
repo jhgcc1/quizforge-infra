@@ -51,6 +51,7 @@ resource "aws_cognito_identity_provider" "google" {
 
   attribute_mapping = {
     email    = "email"
+    name     = "name"
     username = "sub"
   }
 
@@ -73,6 +74,7 @@ resource "aws_cognito_identity_provider" "facebook" {
 
   attribute_mapping = {
     email    = "email"
+    name     = "name"
     username = "id"
   }
 
@@ -87,7 +89,7 @@ resource "aws_cognito_user_pool_client" "web" {
   generate_secret                      = true
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["openid", "email"]
+  allowed_oauth_scopes                 = ["openid", "email", "profile"] # profile: the BFF reads `name` from /oauth2/userInfo
   supported_identity_providers         = local.web_identity_providers
   callback_urls                        = ["https://${aws_cloudfront_distribution.main.domain_name}/auth/callback"]
   logout_urls                          = ["https://${aws_cloudfront_distribution.main.domain_name}"]
@@ -136,7 +138,7 @@ resource "aws_cognito_user_pool_client" "local_dev" {
   generate_secret                      = true
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["openid", "email"]
+  allowed_oauth_scopes                 = ["openid", "email", "profile"] # profile: the BFF reads `name` from /oauth2/userInfo
   supported_identity_providers         = local.web_identity_providers
   callback_urls                        = ["http://localhost:13000/auth/callback"]
   logout_urls                          = ["http://localhost:13000"]
