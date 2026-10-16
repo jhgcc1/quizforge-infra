@@ -21,19 +21,39 @@ AWS credentials at run time.
 
 ## Deploy
 
-Actions > **Deploy** > Run workflow (branch `main`).
+Actions > **Deploy** > Run workflow (branch `main`). There is nothing to type: a deploy always takes the **main of each side**.
 
 | Input | Meaning |
 | --- | --- |
-| `scope` | `all` (api, worker, scorer, redteam, migrate, web) or `web-only` |
-| `image_tag` | tag of the api/worker images. Empty = the newest commit of `jhgcc1/quizforge` `main` whose checks `quality`, `integration`, `migrations`, `e2e`, `docker-build`, `promptfoo` and `llm-eval` are green **and** whose images are in ECR |
-| `web_tag` | tag of the web image, for example `web-0123456789ab`. Empty = what runs now |
+| `scope` | `all` (back end and front end), `api` (back end only: api, worker, scorer, redteam, migrate), `web` (front end only) |
 
-1. `resolve` (no approval needed, read-only role): refuses if the environment is paused, picks the tags, verifies the images in ECR, and writes a
-   plan preview to the job summary.
-2. `deploy` waits for the approval of the `production` environment, then: drift check, **database migration before the new code**, plan, apply,
-   smoke tests through CloudFront. A web-only deploy runs a targeted plan and refuses anything that destroys something other than an old web task
-   definition revision.
+1. `resolve` (no approval needed, read-only role): refuses if the environment is paused, then resolves each side to the newest commit of its
+   `main` whose required checks are green **and** whose images are already in ECR — `quality integration migrations e2e docker-build promptfoo
+   llm-eval` for [`jhgcc1/quizforge`](https://github.com/jhgcc1/quizforge), `quality build e2e docker-build secrets-scan` for
+   [`jhgcc1/quizforge-web`](https://github.com/jhgcc1/quizforge-web). It writes what changes and a plan preview to the job summary.
+2. `apply` (the reusable `apply.yml`) waits for the approval of the `production` environment, then: drift check, **database migration before the
+   new code**, plan, apply, smoke tests through CloudFront. A `web` deploy runs a targeted plan and refuses anything that destroys something other
+   than an old web task definition revision.
+
+## Rollback
+
+Actions > **Rollback** > Run workflow. This is the only place where a tag is typed by hand, so a stale tag can never reach production through a
+distracted click on the normal path.
+
+| Input | Meaning |
+| --- | --- |
+| `image_tag` | the api/worker tag to go back to. Empty = leave the back end as it is |
+| `web_tag` | the web tag to go back to, for example `web-0123456789ab`. Empty = leave the front end as it is |
+
+At least one is required, and at least one must differ from what is running. It goes through the same `apply.yml` as a deploy: same approval, same
+drift check, same smoke tests. **The database migration is not undone** — schema changes are expand/contract, so the older code keeps working
+against the newer schema.
+
+Where to find a tag: the summary of any past Deploy run, or
+
+```bash
+aws ecs describe-task-definition --task-definition quizforge-prod-api --query 'taskDefinition.containerDefinitions[0].image'
+```
 
 **Who can approve:** the reviewers of the `production` environment (the repository owner, `jhgcc1`; configured in `github/infra_repo.tf`). The
 environment only accepts runs from `main`, and the deploy IAM role trusts only this environment of this repository.

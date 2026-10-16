@@ -1,0 +1,110 @@
+name: Rollback
+
+# Going back to a version that was running before. This is the ONLY place where a tag is typed by hand: the normal path
+# (deploy.yml) always takes the main of each side, so a stale tag can never be deployed by a distracted click there.
+#
+# Find a tag: the summary of any past Deploy run, or
+#   aws ecs describe-task-definition --task-definition quizforge-prod-api --query 'taskDefinition.containerDefinitions[0].image'
+#
+# It applies exactly the same path as a deploy (approval, drift check, migration, apply, smoke tests). Note that the
+# migration is NOT rolled back: schema changes are expand/contract, so the older code keeps working against the new schema.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "api/worker image tag to go back to (empty = leave the back end as it is)"
+        type: string
+        required: false
+        default: ""
+      web_tag:
+        description: "web image tag to go back to, for example web-0123456789ab (empty = leave the front end as it is)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+  TF_VAR_paused: ${{ vars.PAUSED || 'false' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      id-token: write # the READ-ONLY plan role
+      contents: read
+    outputs:
+      image_tag: ${{ steps.pick.outputs.image_tag }}
+      web_tag: ${{ steps.pick.outputs.web_tag }}
+      scope: ${{ steps.pick.outputs.scope }}
+    steps:
+      - name: Refuse to roll back while the environment is paused
+        run: |
+          if [ "${{ vars.PAUSED }}" = "true" ]; then
+            echo "::error::The environment is PAUSED. Run scripts/resume.sh first, then re-run this workflow."
+            exit 1
+          fi
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Check the tags and that their images are in ECR
+        id: pick
+        env:
+          IN_IMAGE_TAG: ${{ inputs.image_tag }}
+          IN_WEB_TAG: ${{ inputs.web_tag }}
+        run: |
+          tag_of() { aws ecs describe-task-definition --task-definition "$1" --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2; }
+          have() { aws ecr describe-images --repository-name "quizforge/$1" --image-ids "imageTag=$2" >/dev/null 2>&1; }
+          valid() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; }
+          current_api=$(tag_of quizforge-prod-api); current_web=$(tag_of quizforge-prod-web)
+
+          [ -n "$IN_IMAGE_TAG" ] || [ -n "$IN_WEB_TAG" ] || { echo "::error::give at least one tag: this workflow only goes back to a version you name"; exit 1; }
+
+          if [ -n "$IN_IMAGE_TAG" ]; then
+            valid "$IN_IMAGE_TAG" || { echo "::error::image_tag has characters that are not allowed"; exit 1; }
+            image_tag=$IN_IMAGE_TAG
+            for s in api worker redteam; do have $s "$image_tag" || { echo "::error::quizforge/$s:$image_tag is not in ECR"; exit 1; }; done
+          else
+            image_tag=$current_api
+          fi
+          if [ -n "$IN_WEB_TAG" ]; then
+            valid "$IN_WEB_TAG" || { echo "::error::web_tag has characters that are not allowed"; exit 1; }
+            web_tag=$IN_WEB_TAG
+            have web "$web_tag" || { echo "::error::quizforge/web:$web_tag is not in ECR"; exit 1; }
+          else
+            web_tag=$current_web
+          fi
+          [ "$image_tag" != "$current_api" ] || [ "$web_tag" != "$current_web" ] || { echo "::error::both tags are what is already running: nothing to roll back"; exit 1; }
+
+          # `web` only when the back end is untouched, so the apply stays as narrow as the request
+          if [ "$image_tag" = "$current_api" ]; then scope=web; else scope=all; fi
+          { echo "image_tag=$image_tag"; echo "web_tag=$web_tag"; echo "scope=$scope"; } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Rollback request"
+            echo "| | now | going back to |"; echo "|---|---|---|"
+            echo "| api, worker, scorer, redteam, migrate | \`${current_api:0:12}\` | \`${image_tag:0:12}\` |"
+            echo "| web | \`$current_web\` | \`$web_tag\` |"
+            echo; echo "scope: **$scope**. Images verified in ECR. The database migration is not undone (expand/contract)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    needs: check
+    uses: ./.github/workflows/apply.yml
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      image_tag: ${{ needs.check.outputs.image_tag }}
+      web_tag: ${{ needs.check.outputs.web_tag }}
+      scope: ${{ needs.check.outputs.scope }}
