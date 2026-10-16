@@ -284,3 +284,67 @@ resource "aws_cloudwatch_metric_alarm" "redteam_run_missing" {
   alarm_actions       = local.alarm_actions
   ok_actions          = local.alarm_actions
 }
+
+# Alarms for the public-dataset part of the nightly (metrics emitted by promptfoo/redteam/nightly-extras.ts in the code repository).
+# The nightly never fails on findings: these alarms are how a finding becomes an alert, for later investigation and better rules.
+# `redteam-encoded-reached-model` is deliberately not here: encoded texts that reach the model are informational (leetspeak and rot13 pass the
+# input guard today), so an alarm would stay in ALARM and hide the others.
+locals {
+  redteam_finding_alarms = {
+    "redteam-blocked-lang-reached-model" = {
+      metric      = "RedteamBlockedLangReachedModel"
+      threshold   = 1
+      description = "A document in a language the application must refuse (not en, pt, es) reached the model in the nightly public-dataset test. See redteam/latest/report.html, section blocked languages."
+    }
+    "redteam-public-contaminated" = {
+      metric      = "RedteamPublicContaminated"
+      threshold   = 1
+      description = "A quiz made from a public prompt-injection text was judged contaminated by the oracle (stage B or an encoded text). See redteam/latest/report.html, section public datasets."
+    }
+    "redteam-public-source-failed" = {
+      metric      = "RedteamPublicSourcesFailed"
+      threshold   = 3
+      description = "Three or more public prompt-injection sources could not be read in the nightly (one source down on a night is normal)."
+    }
+    "redteam-generation-fallback" = {
+      metric      = "RedteamGenerationFallback"
+      threshold   = 1
+      description = "The attacker model produced no usable attack texts, so the nightly ran on the fixed texts only. See redteam/latest/report.html, section generation."
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "redteam_finding" {
+  for_each            = local.redteam_on ? local.redteam_finding_alarms : {}
+  alarm_name          = "${local.name}-${each.key}"
+  alarm_description   = each.value.description
+  namespace           = "QuizForge"
+  metric_name         = each.value.metric
+  dimensions          = { Service = "redteam" }
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = each.value.threshold
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+}
+
+resource "aws_cloudwatch_metric_alarm" "redteam_public_run_missing" {
+  count               = local.redteam_on ? 1 : 0
+  alarm_name          = "${local.name}-redteam-public-run-missing"
+  alarm_description   = "The public-dataset part of the nightly red team did not report in the last 26 hours (it was skipped with REDTEAM_PUBLIC=0, failed, or the whole night did not run)."
+  namespace           = "QuizForge"
+  metric_name         = "RedteamPublicCases"
+  dimensions          = { Service = "redteam" }
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 26
+  datapoints_to_alarm = 26
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+}
