@@ -1,0 +1,146 @@
+name: Apply to production
+
+# The production path itself: approval, drift check, migration before the new code, terraform apply, smoke tests.
+# It never decides WHAT to deploy -- it is called with the tags already chosen:
+#   deploy.yml    the main of each repository (the normal case: nothing to type)
+#   rollback.yml  tags given by hand (going back to a known good one)
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "api/worker/scorer/redteam/migrate image tag"
+        type: string
+        required: true
+      web_tag:
+        description: "web image tag"
+        type: string
+        required: true
+      scope:
+        description: "all | api | web"
+        type: string
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production # manual approval + the only context the deploy IAM role trusts
+    concurrency: { group: deploy-production, cancel-in-progress: false } # never two deploys at the same time
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TAG: ${{ inputs.image_tag }}
+      WEB_TAG: ${{ inputs.web_tag }}
+      SCOPE: ${{ inputs.scope }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - name: Refuse to deploy while the environment is paused
+        run: |
+          if [ "${{ vars.PAUSED }}" = "true" ]; then
+            echo "::error::The environment is PAUSED. Run scripts/resume.sh first, then re-run this workflow."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.x", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Social login credentials from AWS Secrets Manager
+        uses: ./.github/actions/social-secrets
+
+      - name: "Verify the images exist in ECR (again, the approval may have taken a while)"
+        run: |
+          have() { aws ecr describe-images --repository-name "quizforge/$1" --image-ids "imageTag=$2" >/dev/null 2>&1; }
+          if [ "$SCOPE" != web ]; then for s in api worker redteam; do have $s "$TAG" || { echo "::error::quizforge/$s:$TAG is not in ECR"; exit 1; }; done; fi
+          have web "$WEB_TAG" || { echo "::error::quizforge/web:$WEB_TAG is not in ECR"; exit 1; }
+
+      - name: terraform init (remote state, native S3 locking)
+        working-directory: terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=quizforge/prod/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
+
+      - name: Drift check (state vs reality) before changing anything
+        working-directory: terraform
+        run: |
+          set +e
+          terraform plan -input=false -no-color -detailed-exitcode -refresh-only -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" > drift.txt 2>&1
+          code=$?
+          tail -40 drift.txt
+          if [ $code -eq 1 ]; then echo "::error::terraform could not read the state/infrastructure"; exit 1; fi
+          if [ $code -eq 2 ]; then echo "::warning::out-of-band changes detected (see the log); the apply below will reconcile them"; fi
+
+      - name: Database migration BEFORE the new code (expand/contract keeps the old code working)
+        id: premigrate
+        if: env.SCOPE != 'web'
+        working-directory: terraform
+        run: |
+          if terraform state show aws_ecs_task_definition.migrate >/dev/null 2>&1; then
+            terraform apply -input=false -auto-approve -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" -target=aws_ecs_task_definition.migrate
+            ../scripts/run-migration.sh
+            echo "first=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "first deployment: the migration runs right after the infrastructure exists"
+            echo "first=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Plan (web task definition and service only) and refuse anything that destroys
+        if: env.SCOPE == 'web'
+        working-directory: terraform
+        run: |
+          terraform plan -input=false -no-color -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" \
+            -target=aws_ecs_task_definition.web -target=aws_ecs_service.web -out=deploy.tfplan | tail -30
+          terraform show -json deploy.tfplan | jq -e '[.resource_changes[] | select(.change.actions | index("delete")) | select(.type != "aws_ecs_task_definition")] | length == 0' >/dev/null \
+            || { echo "::error::the plan deletes something other than an old web task definition revision"; exit 1; }
+          terraform show -json deploy.tfplan | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions|join(",")) \(.address)"'
+
+      - name: Plan (everything; the migration task definition is already applied)
+        if: env.SCOPE != 'web'
+        working-directory: terraform
+        run: terraform plan -input=false -no-color -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" -out=deploy.tfplan | grep -vE "Refreshing state|Reading\.\.\.|Read complete" | tail -60
+
+      - name: terraform apply (rolling deploy with circuit breaker; waits for steady state)
+        working-directory: terraform
+        run: terraform apply -input=false -auto-approve deploy.tfplan
+
+      - name: "Database migration (first deployment only, the database did not exist before the apply)"
+        if: steps.premigrate.outputs.first == 'true'
+        working-directory: terraform
+        run: ../scripts/run-migration.sh
+
+      - name: Smoke test through CloudFront
+        working-directory: terraform
+        run: |
+          url=$(terraform output -raw app_url)
+          echo "app: $url"
+          expect() { # <description> <allowed http codes, regex> <curl args...>
+            local what=$1 want=$2; shift 2
+            local got; got=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@" || true)
+            if ! [[ "$got" =~ ^($want)$ ]]; then echo "::error::$what: expected HTTP $want, got $got"; exit 1; fi
+            echo "ok  $what ($got)"
+          }
+          expect "entry page sends visitors to the login" 307 "$url/"
+          expect "sign-in error page is shown"        200 "$url/?error=login_denied"
+          expect "login goes to the Cognito Hosted UI" 307 "$url/auth/login"
+          expect "BFF refuses anonymous calls" 401 "$url/bff/v1/quizzes"
+          expect "app pages need a session"    307 "$url/app"
+          expect "API requires a token"        401 "$url/v1/quizzes"
+          if [ "$SCOPE" != web ]; then
+            expect "API spec is served"        200 "$url/openapi.json"
+            expect "bad token is rejected"     401 -H "Authorization: Bearer not.a.jwt" "$url/v1/quizzes"
+            # the ALB must not be reachable around CloudFront: its security group drops the connection (000)
+            # and, even past that, the listener answers 403 without the secret header
+            alb_ip=$(getent ahostsv4 "$(terraform output -raw alb_dns)" | awk '{print $1; exit}')
+            expect "ALB cannot be reached around CloudFront" "000|403" --connect-timeout 6 "http://$alb_ip/"
+          fi
+          echo "### Deployed ($SCOPE): api/worker \`${TAG::12}\`, web \`$WEB_TAG\` to $url" >> "$GITHUB_STEP_SUMMARY"

@@ -1,44 +1,32 @@
 name: Deploy
 
+# Deploy the MAIN of both repositories. There is nothing to type: the tags are resolved here.
+#   api  = the newest commit of jhgcc1/quizforge main whose required checks are green and whose images are in ECR
+#   web  = the newest commit of jhgcc1/quizforge-web main whose required checks are green and whose image is in ECR
+# Going back to an older version is a different operation with a different name: see rollback.yml.
+#
+#   scope  all = api, worker, scorer, redteam, migrate and web;  api = everything but the web;  web = only the web.
+#
 # PULL deploy: this repository decides what goes to production and when; the code and front end repositories only publish
-# images to ECR (tag = commit sha; web: web-<12 chars of the front end commit). No cross-repository tokens: the checks of the code
-# repository are read through the public API, the images through the AWS role.
-#
-#   1. resolve: (before any approval) pick the tags, refuse if paused, verify the images exist in ECR, show the plan in the summary.
-#   2. deploy:  (environment `production`: human approval, OIDC deploy role) drift check, migration BEFORE the new code,
-#               terraform apply, smoke tests.
-#
-# Inputs:
-#   scope      all = api, worker, scorer, redteam, migrate and web;  web-only = only the web task definition and service.
-#   image_tag  api/worker/scorer/redteam/migrate tag. Empty = the newest commit of jhgcc1/quizforge main whose checks quality, integration,
-#              migrations, e2e, docker-build, promptfoo and llm-eval are all successful AND whose images exist in ECR.
-#   web_tag    web image tag. Empty = what runs now.
+# images to ECR. No cross-repository tokens: their checks are read through the public API, the images through the AWS role.
 on:
   workflow_dispatch:
     inputs:
       scope:
-        description: "What to deploy"
+        description: "What to deploy (always the main of that side)"
         type: choice
-        options: [all, web-only]
+        options: [all, api, web]
         default: all
-      image_tag:
-        description: "api/worker image tag (empty = newest green commit of the code repository main whose images are in ECR)"
-        type: string
-        required: false
-        default: ""
-      web_tag:
-        description: "web image tag, for example web-0123456789ab (empty = what runs now)"
-        type: string
-        required: false
-        default: ""
 
 permissions:
   contents: read
 
 env:
   CODE_REPO: jhgcc1/quizforge
-  # the checks of the code repository that must be green on the commit being deployed
+  WEB_REPO: jhgcc1/quizforge-web
+  # the checks that must be green on the commit being deployed, in each repository
   REQUIRED_CHECKS: "quality integration migrations e2e docker-build promptfoo llm-eval"
+  WEB_REQUIRED_CHECKS: "quality build e2e docker-build secrets-scan"
   TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
   TF_VAR_paused: ${{ vars.PAUSED || 'false' }}
 
@@ -53,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
-      id-token: write # OIDC: the READ-ONLY plan role (the deploy role is only for the approved job below)
+      id-token: write # OIDC: the READ-ONLY plan role (the deploy role is only for the approved job)
       contents: read
     outputs:
       image_tag: ${{ steps.pick.outputs.image_tag }}
@@ -73,55 +61,58 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - name: Pick the tags and verify the images exist in ECR
+      - name: Resolve the main of each side and verify the images exist in ECR
         id: pick
         env:
           GH_TOKEN: ${{ github.token }}
           IN_SCOPE: ${{ inputs.scope }}
-          IN_IMAGE_TAG: ${{ inputs.image_tag }}
-          IN_WEB_TAG: ${{ inputs.web_tag }}
         run: |
           tag_of() { aws ecs describe-task-definition --task-definition "$1" --query 'taskDefinition.containerDefinitions[0].image' --output text | cut -d: -f2; }
           have() { aws ecr describe-images --repository-name "quizforge/$1" --image-ids "imageTag=$2" >/dev/null 2>&1; } # <service> <tag>
-          valid() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; }
           current_api=$(tag_of quizforge-prod-api); current_web=$(tag_of quizforge-prod-web)
           echo "running now: api/worker ${current_api:0:12}, web $current_web"
-
           scope=${IN_SCOPE:-all}
-          web_tag=${IN_WEB_TAG:-$current_web}
-          valid "$web_tag" || { echo "::error::web_tag has characters that are not allowed"; exit 1; }
 
-          if [ "$scope" = web-only ]; then
-            image_tag=$current_api # the other services keep what runs now
-            [ -z "$IN_IMAGE_TAG" ] || echo "::warning::image_tag is ignored for scope web-only"
-          elif [ -n "$IN_IMAGE_TAG" ]; then
-            image_tag=$IN_IMAGE_TAG
-            valid "$image_tag" || { echo "::error::image_tag has characters that are not allowed"; exit 1; }
-          else
-            echo "looking for the newest commit of $CODE_REPO main with green checks and images in ECR..."
-            image_tag=""
-            for sha in $(gh api "repos/$CODE_REPO/commits?sha=main&per_page=30" --jq '.[].sha'); do
-              runs=$(gh api "repos/$CODE_REPO/commits/$sha/check-runs?per_page=100" --jq '[.check_runs[] | {(.name): .conclusion}] | add // {}')
-              ok=1; for job in $REQUIRED_CHECKS; do [ "$(jq -r --arg j "$job" '.[$j] // "missing"' <<< "$runs")" = success ] || { ok=0; break; }; done
-              [ $ok = 1 ] || { echo "  ${sha:0:7}: checks not all green"; continue; }
-              for s in api worker redteam; do have $s "$sha" || { ok=0; echo "  ${sha:0:7}: green, but quizforge/$s:$sha is not in ECR (yet)"; break; }; done
+          # The newest commit of a repository's main that is green AND whose images are already in ECR. $1 repo, $2 checks,
+          # $3 how the tag is built from the sha (identity for the back end, web-<12> for the front end), $4.. services to find.
+          newest_green() {
+            local repo=$1 checks=$2 shape=$3; shift 3
+            local sha tag runs ok
+            for sha in $(gh api "repos/$repo/commits?sha=main&per_page=30" --jq '.[].sha'); do
+              runs=$(gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --jq '[.check_runs[] | {(.name): .conclusion}] | add // {}')
+              ok=1; for job in $checks; do [ "$(jq -r --arg j "$job" '.[$j] // "missing"' <<< "$runs")" = success ] || { ok=0; break; }; done
+              [ $ok = 1 ] || { echo "  ${sha:0:7}: checks not all green" >&2; continue; }
+              if [ "$shape" = web ]; then tag="web-${sha:0:12}"; else tag="$sha"; fi
+              for s in "$@"; do have "$s" "$tag" || { ok=0; echo "  ${sha:0:7}: green, but quizforge/$s:$tag is not in ECR (yet)" >&2; break; }; done
               [ $ok = 1 ] || continue
-              image_tag=$sha; break
+              echo "$tag"; return 0
             done
-            [ -n "$image_tag" ] || { echo "::error::no commit among the last 30 of $CODE_REPO main has green checks and its images in ECR; pass image_tag explicitly"; exit 1; }
+            return 1
+          }
+
+          if [ "$scope" = web ]; then
+            image_tag=$current_api # the other services keep what runs now
+          else
+            echo "looking for the newest green commit of $CODE_REPO main..."
+            image_tag=$(newest_green "$CODE_REPO" "$REQUIRED_CHECKS" sha api worker redteam) \
+              || { echo "::error::no commit among the last 30 of $CODE_REPO main is green with its images in ECR"; exit 1; }
           fi
 
-          # the images must exist BEFORE anything is applied: a task definition pointing at a missing image would fail the rollout
-          if [ "$scope" = all ]; then
-            for s in api worker redteam; do have $s "$image_tag" || { echo "::error::quizforge/$s:$image_tag is not in ECR"; exit 1; }; done
+          if [ "$scope" = api ]; then
+            web_tag=$current_web # the front end keeps what runs now
+          else
+            echo "looking for the newest green commit of $WEB_REPO main..."
+            web_tag=$(newest_green "$WEB_REPO" "$WEB_REQUIRED_CHECKS" web web) \
+              || { echo "::error::no commit among the last 30 of $WEB_REPO main is green with its image in ECR"; exit 1; }
           fi
-          have web "$web_tag" || { echo "::error::quizforge/web:$web_tag is not in ECR"; exit 1; }
+
           { echo "image_tag=$image_tag"; echo "web_tag=$web_tag"; echo "scope=$scope"; } >> "$GITHUB_OUTPUT"
+          same() { [ "$1" = "$2" ] && echo "unchanged" || echo "**new**"; }
           {
-            echo "### Deploy request"
-            echo "| | now | requested |"; echo "|---|---|---|"
-            echo "| api, worker, scorer, redteam, migrate | \`${current_api:0:12}\` | \`${image_tag:0:12}\` |"
-            echo "| web | \`$current_web\` | \`$web_tag\` |"
+            echo "### Deploy request (main of each side)"
+            echo "| | now | requested | |"; echo "|---|---|---|---|"
+            echo "| api, worker, scorer, redteam, migrate | \`${current_api:0:12}\` | \`${image_tag:0:12}\` | $(same "$current_api" "$image_tag") |"
+            echo "| web | \`$current_web\` | \`$web_tag\` | $(same "$current_web" "$web_tag") |"
             echo; echo "scope: **$scope**. Images verified in ECR."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Plan preview (read-only role, placeholders for the social login secrets)
@@ -136,128 +127,18 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=quizforge/prod/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true" -backend-config="encrypt=true" >/dev/null
-          targets=(); [ "$SCOPE" = web-only ] && targets=(-target=aws_ecs_task_definition.web -target=aws_ecs_service.web)
+          targets=(); [ "$SCOPE" = web ] && targets=(-target=aws_ecs_task_definition.web -target=aws_ecs_service.web)
           terraform plan -input=false -lock=false -no-color -var "image_tag=$IMAGE_TAG" -var "web_image_tag=$WEB_TAG" "${targets[@]}" > preview.txt 2>&1 || { tail -40 preview.txt; exit 1; }
           { echo; echo '<details><summary>Plan preview</summary>'; echo; echo '```'; grep -vE "Refreshing state|Reading\.\.\.|Read complete" preview.txt | tail -c 30000; echo '```'; echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
 
-  deploy:
-    name: deploy
+  apply:
     needs: resolve
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    environment: production # manual approval + the only context the deploy IAM role trusts
-    concurrency: { group: deploy-production, cancel-in-progress: false } # never two deploys at the same time
+    uses: ./.github/workflows/apply.yml
+    secrets: inherit
     permissions:
       id-token: write
       contents: read
-    env:
-      TAG: ${{ needs.resolve.outputs.image_tag }}
-      WEB_TAG: ${{ needs.resolve.outputs.web_tag }}
-      SCOPE: ${{ needs.resolve.outputs.scope }}
-      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
-    steps:
-      - name: Refuse to deploy while the environment is paused
-        run: |
-          if [ "${{ vars.PAUSED }}" = "true" ]; then
-            echo "::error::The environment is PAUSED. Run scripts/resume.sh first, then re-run this workflow."
-            exit 1
-          fi
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with: { terraform_version: "1.x", terraform_wrapper: false }
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Social login credentials from AWS Secrets Manager
-        uses: ./.github/actions/social-secrets
-
-      - name: "Verify the images exist in ECR (again, the approval may have taken a while)"
-        run: |
-          have() { aws ecr describe-images --repository-name "quizforge/$1" --image-ids "imageTag=$2" >/dev/null 2>&1; }
-          if [ "$SCOPE" = all ]; then for s in api worker redteam; do have $s "$TAG" || { echo "::error::quizforge/$s:$TAG is not in ECR"; exit 1; }; done; fi
-          have web "$WEB_TAG" || { echo "::error::quizforge/web:$WEB_TAG is not in ECR"; exit 1; }
-
-      - name: terraform init (remote state, native S3 locking)
-        working-directory: terraform
-        run: |
-          terraform init -input=false \
-            -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=quizforge/prod/terraform.tfstate" \
-            -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true" -backend-config="encrypt=true"
-
-      - name: Drift check (state vs reality) before changing anything
-        working-directory: terraform
-        run: |
-          set +e
-          terraform plan -input=false -no-color -detailed-exitcode -refresh-only -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" > drift.txt 2>&1
-          code=$?
-          tail -40 drift.txt
-          if [ $code -eq 1 ]; then echo "::error::terraform could not read the state/infrastructure"; exit 1; fi
-          if [ $code -eq 2 ]; then echo "::warning::out-of-band changes detected (see the log); the apply below will reconcile them"; fi
-
-      - name: Database migration BEFORE the new code (expand/contract keeps the old code working)
-        id: premigrate
-        if: env.SCOPE == 'all'
-        working-directory: terraform
-        run: |
-          if terraform state show aws_ecs_task_definition.migrate >/dev/null 2>&1; then
-            terraform apply -input=false -auto-approve -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" -target=aws_ecs_task_definition.migrate
-            ../scripts/run-migration.sh
-            echo "first=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "first deployment: the migration runs right after the infrastructure exists"
-            echo "first=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Plan (web task definition and service only) and refuse anything that destroys
-        if: env.SCOPE == 'web-only'
-        working-directory: terraform
-        run: |
-          terraform plan -input=false -no-color -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" \
-            -target=aws_ecs_task_definition.web -target=aws_ecs_service.web -out=deploy.tfplan | tail -30
-          terraform show -json deploy.tfplan | jq -e '[.resource_changes[] | select(.change.actions | index("delete")) | select(.type != "aws_ecs_task_definition")] | length == 0' >/dev/null \
-            || { echo "::error::the plan deletes something other than an old web task definition revision"; exit 1; }
-          terraform show -json deploy.tfplan | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions|join(",")) \(.address)"'
-
-      - name: Plan (everything; the migration task definition is already applied)
-        if: env.SCOPE == 'all'
-        working-directory: terraform
-        run: terraform plan -input=false -no-color -var "image_tag=$TAG" -var "web_image_tag=$WEB_TAG" -out=deploy.tfplan | grep -vE "Refreshing state|Reading\.\.\.|Read complete" | tail -60
-
-      - name: terraform apply (rolling deploy with circuit breaker; waits for steady state)
-        working-directory: terraform
-        run: terraform apply -input=false -auto-approve deploy.tfplan
-
-      - name: "Database migration (first deployment only, the database did not exist before the apply)"
-        if: steps.premigrate.outputs.first == 'true'
-        working-directory: terraform
-        run: ../scripts/run-migration.sh
-
-      - name: Smoke test through CloudFront
-        working-directory: terraform
-        run: |
-          url=$(terraform output -raw app_url)
-          echo "app: $url"
-          expect() { # <description> <allowed http codes, regex> <curl args...>
-            local what=$1 want=$2; shift 2
-            local got; got=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@" || true)
-            if ! [[ "$got" =~ ^($want)$ ]]; then echo "::error::$what: expected HTTP $want, got $got"; exit 1; fi
-            echo "ok  $what ($got)"
-          }
-          expect "entry page sends visitors to the login" 307 "$url/"
-          expect "sign-in error page is shown"        200 "$url/?error=login_denied"
-          expect "login goes to the Cognito Hosted UI" 307 "$url/auth/login"
-          expect "BFF refuses anonymous calls" 401 "$url/bff/v1/quizzes"
-          expect "app pages need a session"    307 "$url/app"
-          expect "API requires a token"        401 "$url/v1/quizzes"
-          if [ "$SCOPE" = all ]; then
-            expect "API spec is served"        200 "$url/openapi.json"
-            expect "bad token is rejected"     401 -H "Authorization: Bearer not.a.jwt" "$url/v1/quizzes"
-            # the ALB must not be reachable around CloudFront: its security group drops the connection (000)
-            # and, even past that, the listener answers 403 without the secret header
-            alb_ip=$(getent ahostsv4 "$(terraform output -raw alb_dns)" | awk '{print $1; exit}')
-            expect "ALB cannot be reached around CloudFront" "000|403" --connect-timeout 6 "http://$alb_ip/"
-          fi
-          echo "### Deployed ($SCOPE): api/worker \`${TAG::12}\`, web \`$WEB_TAG\` to $url" >> "$GITHUB_STEP_SUMMARY"
+    with:
+      image_tag: ${{ needs.resolve.outputs.image_tag }}
+      web_tag: ${{ needs.resolve.outputs.web_tag }}
+      scope: ${{ needs.resolve.outputs.scope }}

@@ -43,7 +43,8 @@ Contracts between the repositories (what must not change without changing the ot
   (`REQUIRED_CHECKS` in `deploy.yml`). The required checks of the code repository's own ruleset are managed here (`github/main.tf`) and use the
   same job names.
 * **`web.ref` stays in the code repository.** It pins the front end commit the code is built and e2e-tested against (`docker-build`, `e2e`). It no
-  longer decides what runs in production: the `web_tag` input does. To deploy exactly the tested front end, pass `web-$(cut -c1-12 web.ref)`.
+  longer decides what runs in production. Since the deploy resolves the main of each repository, and both sides now test against the main of the
+  other, the tested pair and the deployed pair are the same by construction; `web.ref` was removed from the code repository.
 * **The red team entrypoint** `scripts/redteam-nightly-aws.sh` is a path inside the redteam image (`terraform/redteam.tf` `command`). It stays in
   the code repository with the image.
 * **Database migrations** are in the worker image (`packages/db`); the deploy runs them as the one-off `migrate` task of the *new* image before the
