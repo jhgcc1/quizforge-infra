@@ -70,7 +70,7 @@ variable "worker_memory" {
   default     = 4096
 }
 variable "injection_detector" {
-  description = "Semantic prompt-injection detector in the generation worker: off | flag (record a finding, the document goes on) | block (reject). The worker image must be the runtime-detector target, which contains the model."
+  description = "Semantic prompt-injection detector in the generation worker: off | flag (record a finding, the document goes on) | block (reject a high score; see injection_detector_block_threshold). The worker image must be the runtime-detector target, which contains the model."
   type        = string
   default     = "flag"
   validation {
@@ -96,6 +96,24 @@ variable "cpu_architecture" {
     error_message = "cpu_architecture must be ARM64 or X86_64."
   }
 }
+/**
+ * In `block` mode: the score from which a document is REJECTED. The flag threshold stays at its own (lower) value, so a
+ * document between the two still goes through, marked, with the output rails in strict mode.
+ *
+ * 0.9 is measured, not chosen by taste: of 722 real READMEs, 12 score above 0.5 and 6 above 0.9 (elasticsearch,
+ * youtube-dl, pure-bash-bible among them). Those six are refused, which is why the product offers a human review instead
+ * of a dead end. Below 0.9 the false positives double for no extra recall (0.9 catches 50.6% of nightly attacks, 0.5
+ * catches 50.9%).
+ */
+variable "injection_detector_block_threshold" {
+  type    = number
+  default = 0.9
+  validation {
+    condition     = var.injection_detector_block_threshold >= 0.5 && var.injection_detector_block_threshold <= 1
+    error_message = "injection_detector_block_threshold must be between 0.5 and 1."
+  }
+}
+
 variable "task_cpu" {
   type    = number
   default = 512

@@ -256,6 +256,7 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "WORKER_CONCURRENCY", value = "1" },
       # the image is the runtime-detector target: Llama Prompt Guard 2 is baked into it (INJECTION_DETECTOR_MODEL_DIR), so no download at run time
       { name = "INJECTION_DETECTOR", value = var.injection_detector },
+      { name = "INJECTION_DETECTOR_BLOCK_THRESHOLD", value = tostring(var.injection_detector_block_threshold) },
       { name = "SHUTDOWN_GRACE_MS", value = "100000" },
       { name = "LANGFUSE_BASE_URL", value = "https://us.cloud.langfuse.com" },
     ])
