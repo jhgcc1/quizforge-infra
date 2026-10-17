@@ -164,3 +164,18 @@ locals {
   cognito_client_ids     = concat([aws_cognito_user_pool_client.web.id], aws_cognito_user_pool_client.cli[*].id)
   cognito_domain_url     = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.region}.amazoncognito.com"
 }
+
+/**
+ * Reviewers of the documents the prompt-injection classifier refused.
+ *
+ * The API authorises on the `cognito:groups` claim of the access token, so membership of this group is the whole of it:
+ * no role column, no deploy to add or remove somebody. Approving a document puts it in the catalogue everyone sees, so
+ * keep the group small.
+ *
+ *   aws cognito-idp admin-add-user-to-group --user-pool-id <pool> --username <user> --group-name admin
+ */
+resource "aws_cognito_user_group" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.main.id
+  description  = "May approve a document the classifier refused, which adds it to the catalogue for everyone"
+}

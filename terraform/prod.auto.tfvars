@@ -10,3 +10,7 @@ minimax_judge_model = "MiniMax-M3"
 enable_local_dev_client = true
 facebook_enabled        = true
 google_enabled          = true
+
+# The classifier refuses a document scoring 0.9 or more, and the user can ask an administrator to review it (the `admin`
+# Cognito group). Measured: that rejects 6 of 722 real READMEs, which is why the review path exists.
+injection_detector = "block"
