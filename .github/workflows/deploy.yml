@@ -24,8 +24,11 @@ permissions:
 env:
   CODE_REPO: jhgcc1/quizforge
   WEB_REPO: jhgcc1/quizforge-web
-  # the checks that must be green on the commit being deployed, in each repository
-  REQUIRED_CHECKS: "quality integration migrations e2e docker-build promptfoo llm-eval"
+  # the checks that must be green on the commit being deployed, in each repository.
+  # The code repository has no `e2e`: the browser test belongs to the front end's CI, which runs it against this
+  # repository's main (jhgcc1/quizforge#101). What covers the deployed pair here is the smoke step in apply.yml,
+  # which drives the real stack in a browser after the apply, with rollback.yml to go back.
+  REQUIRED_CHECKS: "quality integration migrations docker-build promptfoo llm-eval"
   WEB_REQUIRED_CHECKS: "quality build e2e docker-build secrets-scan"
   TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
   TF_VAR_paused: ${{ vars.PAUSED || 'false' }}

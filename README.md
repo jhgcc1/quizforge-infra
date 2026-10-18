@@ -28,7 +28,7 @@ Actions > **Deploy** > Run workflow (branch `main`). There is nothing to type: a
 | `scope` | `all` (back end and front end), `api` (back end only: api, worker, scorer, redteam, migrate), `web` (front end only) |
 
 1. `resolve` (no approval needed, read-only role): refuses if the environment is paused, then resolves each side to the newest commit of its
-   `main` whose required checks are green **and** whose images are already in ECR — `quality integration migrations e2e docker-build promptfoo
+   `main` whose required checks are green **and** whose images are already in ECR — `quality integration migrations docker-build promptfoo
    llm-eval` for [`jhgcc1/quizforge`](https://github.com/jhgcc1/quizforge), `quality build e2e docker-build secrets-scan` for
    [`jhgcc1/quizforge-web`](https://github.com/jhgcc1/quizforge-web). It writes what changes and a plan preview to the job summary.
 2. `apply` (the reusable `apply.yml`) waits for the approval of the `production` environment, then: drift check, **database migration before the
