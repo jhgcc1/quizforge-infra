@@ -70,9 +70,11 @@ variable "worker_memory" {
   default     = 4096
 }
 variable "injection_detector" {
-  description = "Semantic prompt-injection detector in the generation worker: off | flag (record a finding, the document goes on) | block (reject a high score; see injection_detector_block_threshold). The worker image must be the runtime-detector target, which contains the model."
+  description = "Semantic prompt-injection detector in the generation worker: off | flag (record a finding, the document goes on) | block (refuse a score at or above injection_detector_block_threshold, and offer the user a human review). The worker image must be the runtime-detector target, which contains the model."
   type        = string
-  default     = "flag"
+  # Production runs `block`, and has since the review flow gave a refused user somewhere to go. The default said `flag`
+  # while the deployed task said `block`, so anyone reading this file was reading the wrong thing about production.
+  default = "block"
   validation {
     condition     = contains(["off", "flag", "block"], var.injection_detector)
     error_message = "injection_detector must be off, flag or block."
