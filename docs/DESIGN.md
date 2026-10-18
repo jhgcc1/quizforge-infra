@@ -11,7 +11,7 @@ decides what goes to production and when; the repositories that produce software
 
 | Repository | Owns | Does not own |
 | --- | --- | --- |
-| `jhgcc1/quizforge` (code) | `apps/api`, `apps/worker` (also the scorer, sweeper and migrate tasks: one image), `packages/*` (contract, core, db and its migrations, llm, detector), `evals`, `promptfoo`, `prompts`, the red team image (`docker/redteam`), `e2e`, `site/` reports, `web.ref`. CI: quality, integration, migrations, e2e, docker-build, secrets-scan, promptfoo, llm-eval(-pr), redteam-sample, publish-prompts. **Publishes** `quizforge/api`, `quizforge/worker`, `quizforge/redteam` to ECR | Terraform, IAM, the deploy, the AWS operations scripts |
+| `jhgcc1/quizforge` (code) | `apps/api`, `apps/worker` (also the scorer, sweeper and migrate tasks: one image), `packages/*` (contract, core, db and its migrations, llm, detector), `evals`, `promptfoo`, `prompts`, the red team image (`docker/redteam`), `e2e` (the spec and its harness; the browser test is RUN by the front end's CI), `site/` reports. CI: quality, integration, migrations, docker-build, secrets-scan, promptfoo, llm-eval(-pr), redteam-sample, publish-prompts. **Publishes** `quizforge/api`, `quizforge/worker`, `quizforge/redteam` to ECR | Terraform, IAM, the deploy, the AWS operations scripts |
 | `jhgcc1/quizforge-web` (front end) | Next.js UI + BFF, its CI. **Publishes** `quizforge/web:web-<first 12 characters of the front end commit>` to ECR. Depends on the API contract by URL of a release tarball (`contract-vX.Y.Z`, built by the code repository's `release-contract.yml`) | everything else |
 | `jhgcc1/quizforge-infra` (this) | `terraform/` (production stack), `bootstrap/` (state, ECR, OIDC roles), `github/` (rulesets, environments, variables), `scripts/` (operations), docs about AWS, auth, pause and the nightly red team, the `deploy`, `ci` and `drift` workflows | application code, image builds |
 
@@ -39,12 +39,16 @@ Contracts between the repositories (what must not change without changing the ot
   redteam use the full commit sha of the code repository; web uses `web-<12 chars>` of the front end commit. The scorer, sweeper and migrate
   tasks run the worker image. All images are **linux/arm64** (Graviton Fargate, `cpu_architecture = ARM64`): the publish jobs must run on
   `ubuntu-24.04-arm` (or cross build); this repository builds nothing, so its runners are plain `ubuntu-24.04`.
-* **Check names of the code repository** that gate a deploy: `quality`, `integration`, `migrations`, `e2e`, `docker-build`, `promptfoo`, `llm-eval`
+* **Check names of the code repository** that gate a deploy: `quality`, `integration`, `migrations`, `docker-build`, `promptfoo`, `llm-eval`
   (`REQUIRED_CHECKS` in `deploy.yml`). The required checks of the code repository's own ruleset are managed here (`github/main.tf`) and use the
   same job names.
-* **`web.ref` stays in the code repository.** It pins the front end commit the code is built and e2e-tested against (`docker-build`, `e2e`). It no
-  longer decides what runs in production. Since the deploy resolves the main of each repository, and both sides now test against the main of the
-  other, the tested pair and the deployed pair are the same by construction; `web.ref` was removed from the code repository.
+* **`web.ref` is gone.** It used to pin the front end commit the code was built and tested against. The deploy resolves the main of each
+  repository, so the tested pair and the deployed pair are the same by construction and the pin had nothing left to decide.
+* **The browser test runs in the front end's CI only.** `e2e/quiz.spec.ts` and its harness live in the code repository, because the harness runs
+  the real migrations from `packages/db`; the front end checks the code repository out to get the spec. It is not a check of the code repository
+  and does not gate its deploy. What covers the deployed pair is the smoke step in `apply.yml`, which drives the real stack in a browser after
+  every apply, with `rollback.yml` to go back. The trade is deliberate: a back end change that breaks the UI is caught after the deploy rather
+  than before it.
 * **The red team entrypoint** `scripts/redteam-nightly-aws.sh` is a path inside the redteam image (`terraform/redteam.tf` `command`). It stays in
   the code repository with the image.
 * **Database migrations** are in the worker image (`packages/db`); the deploy runs them as the one-off `migrate` task of the *new* image before the
