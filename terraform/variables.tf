@@ -11,8 +11,13 @@ variable "region" {
   default = "us-east-2"
 }
 variable "image_tag" {
-  description = "Image tag (commit sha) of the web, api, worker and redteam images (the scorer, sweeper and migrate tasks use the worker image)"
+  description = "Image tag (commit sha) of the web, api, worker and redteam images. The migrate task uses the api image; the scorer and the sweeper use the worker image, slim by default (see worker_slim_image)."
   type        = string
+}
+variable "worker_slim_image" {
+  description = "Run the scorer and the sweeper from the worker image built WITHOUT the semantic detector (tag <image_tag>-slim, about 1.6 GB smaller). Neither role reads a document a user supplied, so neither loads the model. Set false to deploy a commit published before that tag existed."
+  type        = bool
+  default     = true
 }
 variable "web_image_tag" {
   description = "Image tag of the web image only. Empty = same as image_tag. A front-end-only deploy sets it and keeps image_tag at what is running."

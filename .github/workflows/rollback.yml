@@ -74,6 +74,9 @@ jobs:
             valid "$IN_IMAGE_TAG" || { echo "::error::image_tag has characters that are not allowed"; exit 1; }
             image_tag=$IN_IMAGE_TAG
             for s in api worker redteam; do have $s "$image_tag" || { echo "::error::quizforge/$s:$image_tag is not in ECR"; exit 1; }; done
+            # the scorer and the sweeper run the slim worker image; a tag from before it existed needs
+            # worker_slim_image=false, and saying so here beats an ECS task that cannot pull its image
+            have worker "$image_tag-slim" || { echo "::error::quizforge/worker:$image_tag-slim is not in ECR. That commit predates the slim worker image: set worker_slim_image=false to go back to it."; exit 1; }
           else
             image_tag=$current_api
           fi
