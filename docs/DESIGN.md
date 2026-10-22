@@ -11,7 +11,7 @@ decides what goes to production and when; the repositories that produce software
 
 | Repository | Owns | Does not own |
 | --- | --- | --- |
-| `jhgcc1/quizforge` (code) | `apps/api`, `apps/worker` (also the scorer, sweeper and migrate tasks: one image), `packages/*` (contract, core, db and its migrations, llm, detector), `evals`, `promptfoo`, `prompts`, the red team image (`docker/redteam`), `e2e` (the spec and its harness; the browser test is RUN by the front end's CI), `site/` reports. CI: quality, integration, migrations, docker-build, secrets-scan, promptfoo, llm-eval(-pr), redteam-sample, publish-prompts. **Publishes** `quizforge/api`, `quizforge/worker`, `quizforge/redteam` to ECR | Terraform, IAM, the deploy, the AWS operations scripts |
+| `jhgcc1/quizforge` (code) | `api/`, `worker/` (also the scorer, sweeper and migrate tasks: one image), `packages/*` (contract, core, db and its migrations, llm), `guardrails/` (the promptfoo suites, the red team and its image, the semantic detector), `evals`, `prompts`, `e2e` (the spec and its harness; the browser test is RUN by the front end's CI), `local/` (the compose stack, which AWS never touches). CI: quality, integration, migrations, docker-build, secrets-scan, promptfoo, llm-eval(-pr), redteam-sample, publish-prompts. **Publishes** `quizforge/api`, `quizforge/worker`, `quizforge/redteam` to ECR | Terraform, IAM, the deploy, the AWS operations scripts |
 | `jhgcc1/quizforge-web` (front end) | Next.js UI + BFF, its CI. **Publishes** `quizforge/web:web-<first 12 characters of the front end commit>` to ECR. Depends on the API contract by URL of a release tarball (`contract-vX.Y.Z`, built by the code repository's `release-contract.yml`) | everything else |
 | `jhgcc1/quizforge-infra` (this) | `terraform/` (production stack), `bootstrap/` (state, ECR, OIDC roles), `github/` (rulesets, environments, variables), `scripts/` (operations), docs about AWS, auth, pause and the nightly red team, the `deploy`, `ci` and `drift` workflows | application code, image builds |
 
@@ -49,7 +49,7 @@ Contracts between the repositories (what must not change without changing the ot
   and does not gate its deploy. What covers the deployed pair is the smoke step in `apply.yml`, which drives the real stack in a browser after
   every apply, with `rollback.yml` to go back. The trade is deliberate: a back end change that breaks the UI is caught after the deploy rather
   than before it.
-* **The red team entrypoint** `scripts/redteam-nightly-aws.sh` is a path inside the redteam image (`terraform/redteam.tf` `command`). It stays in
+* **The red team entrypoint** `guardrails/run-nightly.sh` is a path inside the redteam image (`terraform/redteam.tf` `command`). It stays in
   the code repository with the image.
 * **Database migrations** are in the worker image (`packages/db`); the deploy runs them as the one-off `migrate` task of the *new* image before the
   new services start. Migrations must stay expand/contract.
@@ -112,7 +112,7 @@ The social login credentials are read from Secrets Manager by the composite acti
 | `scripts/_env.sh` | `REPO_ROOT/infra/terraform`; `backend.hcl`; `--repo jhgcc1/quizforge` (PAUSED, ALARM_EMAIL) | `REPO_ROOT/terraform`; init with `-backend-config` (bucket from `TF_STATE_BUCKET`, the repository variable, or the bootstrap naming convention); `INFRA_REPO` (default this repository), `PAUSED_REPOS` for the transition |
 | `scripts/run-migration.sh`, `create-user.sh`, `get-token.sh` | `../infra/terraform` | `../terraform` |
 | `scripts/set-secrets.sh` | `./.env` of the repository root | `ENV_FILE` (default `./.env`; point it at the code repository `.env`) |
-| `terraform/*.tf` | none by path (no `file()`, `templatefile`, `../`); comments mentioning `infra/`, `scripts/`, `docker/` | comments updated; `redteam.tf` command `scripts/redteam-nightly-aws.sh` is a path inside the image (stays in the code repository) |
+| `terraform/*.tf` | none by path (no `file()`, `templatefile`, `../`); comments mentioning `infra/`, `scripts/`, `docker/` | comments updated; `redteam.tf` command `guardrails/run-nightly.sh` is a path inside the image (stays in the code repository) |
 | `terraform/versions.tf`, `bootstrap/outputs.tf` | `backend.hcl` | backend settings passed at init time |
 | `bootstrap/` | OIDC subjects of the code repository only | plan, deploy and publish subjects for three repositories (variables with the immutable ids) |
 | `github/main.tf` | required check names of the code repository's `ci.yml`; `infra/bootstrap` comment | kept (a contract); `code_repo_terraform_checks` drops `terraform-validate` and `terraform-plan` at the cutover |

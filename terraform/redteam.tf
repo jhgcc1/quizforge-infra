@@ -2,7 +2,7 @@
 # A SEPARATE Fargate task (not a service, no load balancer) that EventBridge Scheduler starts every night. It attacks the real pipeline
 # (guard, language policy, Llama Prompt Guard 2, prompts, MiniMax, output rails) with a fresh set of attacks, writes a timestamped report to
 # S3 (redteam/<UTC timestamp>/report.html and summary.json), emits CloudWatch metrics (Embedded Metric Format, Service=redteam) and, when a
-# canary leaked, publishes to the alarm topic. See docs/redteam-nightly.md; scripts/redteam-nightly-aws.sh lives in the quizforge code repository (it is the entrypoint inside the image).
+# canary leaked, publishes to the alarm topic. See docs/redteam-nightly.md; guardrails/run-nightly.sh lives in the quizforge code repository (it is the entrypoint inside the image).
 #
 # Paused environment: there is no NAT gateway, so the task could not reach the model API. The schedule is disabled and the alarms are removed.
 # Bootstrap first: the ECR repository quizforge/redteam is created by bootstrap/ (the publish job of the code repository pushes the image to it).
@@ -174,7 +174,7 @@ resource "aws_ecs_task_definition" "redteam" {
     name      = "redteam"
     image     = local.image.redteam
     essential = true
-    command   = ["scripts/redteam-nightly-aws.sh"]
+    command   = ["guardrails/run-nightly.sh"]
     environment = concat(
       [
         { name = "NODE_ENV", value = "production" },
@@ -285,7 +285,7 @@ resource "aws_cloudwatch_metric_alarm" "redteam_run_missing" {
   ok_actions          = local.alarm_actions
 }
 
-# Alarms for the public-dataset part of the nightly (metrics emitted by promptfoo/redteam/nightly-extras.ts in the code repository).
+# Alarms for the public-dataset part of the nightly (metrics emitted by guardrails/promptfoo/redteam/nightly-extras.ts in the code repository).
 # The nightly never fails on findings: these alarms are how a finding becomes an alert, for later investigation and better rules.
 # `redteam-encoded-reached-model` is deliberately not here: encoded texts that reach the model are informational (leetspeak and rot13 pass the
 # input guard today), so an alarm would stay in ALARM and hide the others.
