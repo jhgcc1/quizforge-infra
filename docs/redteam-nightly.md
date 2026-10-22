@@ -7,10 +7,10 @@ metrics to CloudWatch and raises an alarm if the model obeyed a hidden instructi
 
 1. **EventBridge Scheduler** (`quizforge-prod-redteam`) runs an ECS `RunTask` at `cron(0 6 * * ? *)` (06:00 UTC, variable `redteam_schedule`).
 2. The task `quizforge-prod-redteam` (Fargate, ARM64, 2 vCPU / 4 GB, private subnets, egress-only security group, no service, no load balancer) starts
-   `scripts/redteam-nightly-aws.sh` from the image `quizforge/redteam` (`docker/redteam/Dockerfile` in the code repository, built and pushed by its `publish` job). The image has promptfoo at the pinned version and
+   `guardrails/run-nightly.sh` from the image `quizforge/redteam` (`guardrails/promptfoo/Dockerfile` in the code repository, built and pushed by its `publish` job). The image has promptfoo at the pinned version and
    the Llama Prompt Guard 2 model baked in, like the worker image. The detector mode is the same as production (`injection_detector`).
-3. The script runs `scripts/promptfoo.sh redteam-nightly`: 32 intents x `redteam_num_tests` fresh texts (default 10) x 2 cases (plain and jailbreak
-   template) = about 640 tests. See `promptfoo/README.md` for the intents. Only plain code decides if an attack worked (a canary token in the reply).
+3. The script runs `guardrails/run-suite.sh redteam-nightly`: 32 intents x `redteam_num_tests` fresh texts (default 10) x 2 cases (plain and jailbreak
+   template) = about 640 tests. See `guardrails/promptfoo/README.md` for the intents. Only plain code decides if an attack worked (a canary token in the reply).
 4. Always, even when something leaked, it writes `summary.json`, `report.html` and `new-failures.json`, prints CloudWatch metrics (Embedded Metric Format)
    and uploads to S3. If a canary leaked it also publishes one message to the alarm topic. Then it exits with code 1 (a leak), 2 (upload failed) or 3 (no results).
 5. Two alarms watch it: `quizforge-prod-redteam-leak` (any leak in a day) and `quizforge-prod-redteam-run-missing` (no run in 26 hours).
@@ -52,7 +52,7 @@ aws ecs run-task --cluster quizforge-prod --launch-type FARGATE --task-definitio
 ```
 
 A small `REDTEAM_NUM_TESTS` (1 to 3) is a cheap test of the whole chain. Logs: `/quizforge/prod/redteam`. Locally (no AWS, files in
-`promptfoo/out/nightly/<run id>/`): `MINIMAX_API_KEY=... REDTEAM_NUM_TESTS=1 scripts/redteam-nightly-aws.sh` (promptfoo needs Node 22.22 or newer).
+`guardrails/promptfoo/out/nightly/<run id>/`): `MINIMAX_API_KEY=... REDTEAM_NUM_TESTS=1 guardrails/run-nightly.sh` (promptfoo needs Node 22.22 or newer).
 
 ## How to read the report
 
@@ -68,9 +68,9 @@ A small `REDTEAM_NUM_TESTS` (1 to 3) is a cheap test of the whole chain. Logs: `
 
 1. Open `new-failures.json` of the run. Each entry has the attack text (`prompt`) and its `vars`.
 2. Fix the cause (guard rules in `packages/core/src/injection-rules.ts`, the prompts, or the output rails in `packages/llm/src/output-guard.ts`).
-3. Add the attack to the corpus so a pull request catches it from now on: either as a new test in `promptfoo/redteam/sample.yaml` (copy an entry, set
-   `vars.prompt`, `vars.canary`, `metadata`) or, for a text attack, in `packages/core/src/attacks.ts`. Keep the sample size in sync with `promptfoo/README.md`.
-4. Known cases that are not fixed yet can go to `promptfoo/redteam/known-failures.json` (`[{ "description": "...", "prompt": "..." }]`) so they are not reported as new.
+3. Add the attack to the corpus so a pull request catches it from now on: either as a new test in `guardrails/promptfoo/redteam/sample.yaml` (copy an entry, set
+   `vars.prompt`, `vars.canary`, `metadata`) or, for a text attack, in `packages/core/src/attacks.ts`. Keep the sample size in sync with `guardrails/promptfoo/README.md`.
+4. Known cases that are not fixed yet can go to `guardrails/promptfoo/redteam/known-failures.json` (`[{ "description": "...", "prompt": "..." }]`) so they are not reported as new.
 
 ## Cost
 

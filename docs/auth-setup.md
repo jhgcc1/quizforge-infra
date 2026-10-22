@@ -62,7 +62,13 @@ These limit the damage but do not make it zero: someone can make many accounts. 
 
 ## 7. Local development (lives in the code repository)
 
-The local stack (`docker-compose`, `scripts/local-cognito.sh`, the e2e test) is in the [quizforge](https://github.com/jhgcc1/quizforge) repository. What follows is kept here because the Terraform flag it needs is in this repository.
+The local stack (`local/docker-compose.yml`, the e2e test) is in the [quizforge](https://github.com/jhgcc1/quizforge) repository. What follows is kept here because the Terraform flag it needs is in this repository.
+
+> **The local-Cognito overlay no longer exists.** The code repository removed `scripts/local-cognito.sh` and
+> `docker-compose.cognito.yml`: the local stack runs with `AUTH_MODE=local` (a simulated login) and the real
+> login is exercised from the deployed environment. The `enable_local_dev_client` variable below is therefore
+> unused today; it is kept because it costs nothing and the client it creates is the only way to point a local
+> browser at the real user pool if the overlay is ever rebuilt.
 
 With `AUTH_MODE=local` (docker compose) there is no Cognito. The buttons go to the dev login page, which says **SIMULATION**: no real Google or Facebook is used. Any user name works. This is for trying the flow and for the e2e test.
 
@@ -76,8 +82,7 @@ The local stack normally uses a development login (a simulation). To try the rea
 
 1. **Create the local client** (once, needs your approval, it changes AWS): apply Terraform (this repository, `deploy` workflow or a local apply) with `enable_local_dev_client=true`. It creates a separate Cognito app client, `quizforge-prod-local-dev`, whose only redirect is `http://localhost:13000/auth/callback`. The production client never accepts a localhost redirect. Switch it off again afterwards with `enable_local_dev_client=false`.
 2. **Facebook / Google panels need nothing for localhost.** Their redirect stays the Cognito address plus `/oauth2/idpresponse`; only Cognito knows about localhost.
-3. **Run it:** `AWS_PROFILE=... scripts/local-cognito.sh up` (in the code repository) fetches the client id and secret into `.env.cognito` (git-ignored, mode 600) and restarts the `api` and `web` containers in Cognito mode (`docker-compose.cognito.yml`). Open `http://localhost:13000`: **Create account**, e-mail login and **Continue with Facebook** now go through Cognito. The database, queue and worker stay local.
-4. **Go back** to the simulation with `scripts/local-cognito.sh down`.
+3. **Point the stack at it by hand.** The script and compose overlay that used to do this were removed from the code repository; what they did was read the client id and secret of `quizforge-prod-local-dev` out of Cognito, put them in the environment of the `api` and `web` services, and restart those two with `AUTH_MODE=cognito`. The database, queue and worker stay local either way.
 
 Notes: your Facebook app must be in development mode with you as an administrator or tester (or live), and the account you create is a real user in the production user pool.
 

@@ -256,7 +256,7 @@ variable "flagged_documents_alarm" {
 }
 
 variable "enable_local_dev_client" {
-  description = "Create a separate Cognito app client whose only redirect is http://localhost:13000, to try the real login (Cognito, Google, Facebook) from the local stack (scripts/local-cognito.sh of the quizforge code repository). Off by default."
+  description = "Create a separate Cognito app client whose only redirect is http://localhost:13000, to try the real login (Cognito, Google, Facebook) from a local browser; see docs/auth-setup.md. Off by default."
   type        = bool
   default     = false
 }

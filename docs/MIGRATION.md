@@ -1,5 +1,10 @@
 # Migration: from the code repository to quizforge-infra
 
+> **Historical record.** This describes the move as it was planned and carried out; it is not instructions. Some
+> paths it names no longer exist in the code repository, which reorganised afterwards (`apps/` became `api/` and
+> `worker/`, `promptfoo/` and the detector moved under `guardrails/`, the `site/` report generator was removed).
+> Left as written, because a record of what was done is only useful if it is not edited later.
+
 State of things when this was written (stage 1): this repository exists, seeded with the history of the moved paths; production is untouched; the
 code repository still deploys. Everything below is **additive until the cutover** (step 6), and the Terraform state never moves.
 
