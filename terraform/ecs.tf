@@ -6,6 +6,14 @@ data "aws_ecr_repository" "svc" {
 locals {
   image = { for k, r in data.aws_ecr_repository.svc : k => "${r.repository_url}:${k == "web" && var.web_image_tag != "" ? var.web_image_tag : var.image_tag}" }
 
+  # The SAME worker code, built without the semantic detector. Only the `generate` role screens a document a user
+  # supplied, so only it loads Llama Prompt Guard 2; the scorer reads text that role already admitted and stored, and
+  # the sweeper reads no text at all. The code repository publishes both from one Dockerfile (`<sha>` from the
+  # `runtime-detector` target, `<sha>-slim` from `runtime`), and the slim one is about 1.6 GB smaller, which is 1.6 GB
+  # these two stop pulling on every task start. Set `worker_slim_image = false` to put them back on the full image --
+  # needed to deploy a commit from before the slim tag existed, which the deploy and rollback workflows also check for.
+  worker_slim = var.worker_slim_image ? "${data.aws_ecr_repository.svc["worker"].repository_url}:${var.image_tag}-slim" : local.image.worker
+
   app_url     = "https://${aws_cloudfront_distribution.main.domain_name}"
   api_url     = "http://api.${var.project}.internal:8080"
   db_secret   = aws_db_instance.main.master_user_secret[0].secret_arn
@@ -287,7 +295,7 @@ resource "aws_ecs_task_definition" "scorer" {
   }
   container_definitions = jsonencode([{
     name      = "scorer"
-    image     = local.image.worker
+    image     = local.worker_slim
     essential = true
     environment = concat(local.db_env, var.minimax_judge_model == "" ? [] : [{ name = "MINIMAX_JUDGE_MODEL", value = var.minimax_judge_model }], [
       { name = "NODE_ENV", value = "production" },
@@ -350,7 +358,7 @@ resource "aws_ecs_task_definition" "sweeper" {
   }
   container_definitions = jsonencode([{
     name      = "sweeper"
-    image     = local.image.worker
+    image     = local.worker_slim
     essential = true
     command   = ["node", "--import", "tsx", "src/sweeper.ts"]
     environment = concat(local.db_env, [

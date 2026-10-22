@@ -86,7 +86,11 @@ jobs:
               ok=1; for job in $checks; do [ "$(jq -r --arg j "$job" '.[$j] // "missing"' <<< "$runs")" = success ] || { ok=0; break; }; done
               [ $ok = 1 ] || { echo "  ${sha:0:7}: checks not all green" >&2; continue; }
               if [ "$shape" = web ]; then tag="web-${sha:0:12}"; else tag="$sha"; fi
-              for s in "$@"; do have "$s" "$tag" || { ok=0; echo "  ${sha:0:7}: green, but quizforge/$s:$tag is not in ECR (yet)" >&2; break; }; done
+              # an entry may name a tag suffix: `worker:-slim` demands quizforge/worker:<tag>-slim as well
+              for s in "$@"; do
+                svc=${s%%:*}; sfx=${s#"$svc"}; sfx=${sfx#:}
+                have "$svc" "$tag$sfx" || { ok=0; echo "  ${sha:0:7}: green, but quizforge/$svc:$tag$sfx is not in ECR (yet)" >&2; break; }
+              done
               [ $ok = 1 ] || continue
               echo "$tag"; return 0
             done
@@ -97,7 +101,7 @@ jobs:
             image_tag=$current_api # the other services keep what runs now
           else
             echo "looking for the newest green commit of $CODE_REPO main..."
-            image_tag=$(newest_green "$CODE_REPO" "$REQUIRED_CHECKS" sha api worker redteam) \
+            image_tag=$(newest_green "$CODE_REPO" "$REQUIRED_CHECKS" sha api worker worker:-slim redteam) \
               || { echo "::error::no commit among the last 30 of $CODE_REPO main is green with its images in ECR"; exit 1; }
           fi
 
